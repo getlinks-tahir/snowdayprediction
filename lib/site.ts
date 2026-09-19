@@ -1,5 +1,6 @@
 export const SITE_NAME = "Snow Day Calculator";
-export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000").replace(/\/$/, "");
+
+export const SITE_URL = "https://www.snowdayprediction.online";
 
 /** NWS asks every app to send a User-Agent that identifies it. */
 export const API_USER_AGENT = `SnowDayCalculator/1.0 (${SITE_URL})`;
