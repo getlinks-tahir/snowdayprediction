@@ -81,7 +81,7 @@ export default function HomePage() {
               Will You Get a <span className="gradient-text">Snow Day</span> Tomorrow?
             </h1>
             <p className="hero-sub">
-              Type your ZIP or postal code. We check every hour of the forecast from 3 AM to 7 AM, look for black ice
+              TType your ZIP or postal code. We check every hour of the forecast from 3 AM to 7 AM, look for black ice
               and adjust for how your area handles snow. One tap. No sliders.
             </p>
           </div>
