@@ -32,9 +32,9 @@ export async function generateMetadata(): Promise<Metadata> {
 export default function HomePage() {
   const season = currentSeason();
 
-  const softwareApp = {
+  const WebApp = {
     "@context": "https://schema.org",
-    "@type": "SoftwareApplication",
+    "@type": "WebApplication",
     name: SITE_NAME,
     applicationCategory: "UtilitiesApplication",
     applicationSubCategory: "Weather",
@@ -69,7 +69,7 @@ export default function HomePage() {
 
   return (
     <>
-      <JsonLd data={softwareApp} />
+      <JsonLd data={WebApp} />
       <JsonLd data={faqPage} />
 
       <section className="hero" aria-labelledby="hero-title">
