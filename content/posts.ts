@@ -1,8 +1,11 @@
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+
 export interface PostSection {
   heading?: string;
   paragraphs?: string[];
   list?: string[];
   callout?: string;
+  block?: import("@/lib/admin/blocks").ContentBlock | null;
 }
 
 export interface Post {
@@ -19,7 +22,7 @@ export interface Post {
   sections: PostSection[];
 }
 
-const POSTS: Post[] = [
+export const POSTS: Post[] = [
   {
     slug: "how-much-snow-closes-school",
     title: "How Much Snow Does It Take to Close School?",
@@ -231,11 +234,61 @@ const POSTS: Post[] = [
 ];
 
 /** Newest first, drafts hidden. */
-export async function getPublishedPosts(limit?: number): Promise<Post[]> {
-  const list = POSTS.filter((p) => p.published).sort((a, b) => b.date.localeCompare(a.date));
-  return typeof limit === "number" ? list.slice(0, limit) : list;
+function mapDbPost(row: any): Post {
+  return {
+    slug: row.slug,
+    title: row.title,
+    description: row.description,
+    date: row.date,
+    updated: row.updated ?? undefined,
+    published: row.published,
+    readMinutes: row.read_minutes,
+    image: row.image,
+    imageAlt: row.image_alt,
+    tags: typeof row.tags === "string" ? JSON.parse(row.tags) : row.tags ?? [],
+    sections: row.sections ?? [],
+  };
 }
 
-export async function getPostBySlug(slug: string): Promise<Post | undefined> {
-  return POSTS.find((p) => p.slug === slug && p.published);
+export async function getPublishedPosts(limit?: number): Promise<Post[]> {
+  const supabase = await createSupabaseServerClient();
+
+  let query = supabase
+    .from("posts")
+    .select("*")
+    .eq("published", true)
+    .order("date", { ascending: false });
+
+  if (typeof limit === "number") {
+    query = query.limit(limit);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error("Failed to load published posts:", error);
+    return [];
+  }
+
+  return (data ?? []).map(mapDbPost);
+}
+
+export async function getPostBySlug(
+  slug: string
+): Promise<Post | undefined> {
+  const supabase = await createSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from("posts")
+    .select("*")
+    .eq("slug", slug)
+    .eq("published", true)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Failed to load post:", error);
+    return undefined;
+  }
+
+  return data ? mapDbPost(data) : undefined;
 }
