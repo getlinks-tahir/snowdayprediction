@@ -9,14 +9,18 @@
     "test": "node --test lib/algorithm.test.ts"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.117.3",
     "d3-geo": "^3.1.1",
+    "dotenv": "^18.0.6",
     "next": "^16.3.5",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "server-only": "^0.0.1",
     "topojson-client": "^3.1.0",
     "us-atlas": "^3.0.1",
-    "world-atlas": "^2.0.2"
+    "world-atlas": "^2.0.2",
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/d3-geo": "^3.1.1",
@@ -25,6 +29,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/topojson-client": "^3.1.5",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3"
   },
   "private": true
