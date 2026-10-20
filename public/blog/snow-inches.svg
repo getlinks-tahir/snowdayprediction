@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0ea5e9"/><stop offset="1" stop-color="#6366f1"/></linearGradient><radialGradient id="r" cx=".8" cy=".1" r=".8"><stop offset="0" stop-color="#fff" stop-opacity=".35"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs><rect width="1200" height="675" fill="url(#g)"/><rect width="1200" height="675" fill="url(#r)"/><g fill="#fff" opacity=".7"><circle cx="90" cy="80" r="6"/><circle cx="260" cy="150" r="4"/><circle cx="420" cy="60" r="5"/><circle cx="980" cy="120" r="6"/><circle cx="1120" cy="220" r="4"/><circle cx="760" cy="70" r="4"/><circle cx="160" cy="300" r="5"/><circle cx="1060" cy="420" r="5"/><circle cx="620" cy="160" r="3"/></g>
+<path d="M0 560 Q300 500 600 545 T1200 520 V675 H0Z" fill="#fff" opacity=".95"/>
+<g transform="translate(330 170)"><rect width="110" height="400" rx="16" fill="#fff" opacity=".95"/>
+<g stroke="#0ea5e9" stroke-width="6"><path d="M0 60h50M0 140h70M0 220h50M0 300h70"/></g>
+<text x="60" y="80" font-family="Arial" font-weight="700" font-size="30" fill="#0f172a">12</text>
+<text x="60" y="235" font-family="Arial" font-weight="700" font-size="30" fill="#0f172a">6</text></g>
+<g transform="translate(520 210)" font-family="Arial" font-weight="800" fill="#fff">
+<text font-size="64">How much</text><text y="80" font-size="64">snow closes</text><text y="160" font-size="64">school?</text></g>
+</svg>
