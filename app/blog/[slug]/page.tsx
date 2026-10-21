@@ -102,20 +102,43 @@ export default async function PostPage({ params }: Props) {
           className="author-box"
           style={{
             marginTop: 48,
-            padding: "24px 0",
-            borderTop: "1px solid #e5e7eb",
+            padding: "28px 24px",
+            backgroundColor: "#f8fafc",
+            border: "1px solid #e2e8f0",
+            borderRadius: "12px",
             display: "flex",
             flexDirection: "column",
-            gap: "8px",
+            gap: "6px",
           }}
         >
-          <h3 style={{ margin: 0, fontSize: "1.15rem", fontWeight: 600 }}>
+          <h3
+            style={{
+              margin: 0,
+              fontSize: "1.25rem",
+              fontWeight: 700,
+              color: "#0f172a",
+            }}
+          >
             Muhammad Tahir
           </h3>
-          <p style={{ margin: 0, color: "#6b7280", fontSize: "0.95rem" }}>
+          <p
+            style={{
+              margin: 0,
+              color: "#64748b",
+              fontSize: "0.9rem",
+              fontWeight: 500,
+            }}
+          >
             Creator of Snow Day Calculator
           </p>
-          <p style={{ margin: "8px 0 0", lineHeight: 1.6 }}>
+          <p
+            style={{
+              margin: "10px 0 0",
+              lineHeight: 1.65,
+              color: "#334155",
+              fontSize: "0.975rem",
+            }}
+          >
             I work on Snow Day Calculator to help families in the United States and Canada understand snow day chances, winter weather, and possible school closures.
           </p>
         </div>
