@@ -8,7 +8,7 @@ import PostSections from "@/components/PostSections";
 import { getPostBySlug, getPublishedPosts } from "@/content/posts";
 import { SITE_NAME, SITE_URL } from "@/lib/site";
 
-export const revalidate = 3600;
+export const dynamic = "force-dynamic";
 export const dynamicParams = true;
 
 type Props = {
