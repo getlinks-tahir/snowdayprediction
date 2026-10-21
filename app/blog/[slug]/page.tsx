@@ -14,6 +14,95 @@ type Props = {
   params: Promise<{ slug: string }>;
 };
 
+const AUTHOR_NAME = "Muhammad Tahir";
+const AUTHOR_ROLE = "Creator of Snow Day Calculator";
+const AUTHOR_BIO =
+  "I work on Snow Day Calculator to help families in the United States and Canada understand snow day chances, winter weather, and possible school closures.";
+const AUTHOR_INITIALS = "MT";
+
+// Scoped styles: every selector is prefixed with .author-box, so nothing else on the page is affected.
+const AUTHOR_BOX_CSS = `
+.author-box {
+  --ab-accent: var(--accent, #2563eb);
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin: 48px 0 0;
+  padding: 24px 26px 24px 30px;
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, currentColor 4%, transparent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+}
+.author-box::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: linear-gradient(180deg, var(--ab-accent), color-mix(in srgb, var(--ab-accent) 40%, #7dd3fc));
+}
+.author-box .author-box__avatar {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--ab-accent), color-mix(in srgb, var(--ab-accent) 55%, #0ea5e9));
+  color: #fff;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ab-accent) 18%, transparent);
+  user-select: none;
+}
+.author-box .author-box__body {
+  min-width: 0;
+}
+.author-box .author-box__eyebrow {
+  margin: 0 0 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ab-accent);
+}
+.author-box .author-box__name {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.author-box .author-box__role {
+  margin: 2px 0 10px;
+  font-size: 0.92rem;
+  font-weight: 500;
+  opacity: 0.7;
+}
+.author-box .author-box__bio {
+  margin: 0;
+  font-size: 0.97rem;
+  line-height: 1.65;
+  opacity: 0.88;
+}
+@media (max-width: 560px) {
+  .author-box {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 22px 20px 22px 24px;
+    margin-top: 36px;
+  }
+  .author-box .author-box__avatar {
+    width: 56px;
+    height: 56px;
+    font-size: 1.15rem;
+  }
+}
+`;
+
 export async function generateStaticParams() {
   return [];
 }
@@ -45,7 +134,6 @@ export default async function PostPage({ params }: Props) {
   const more = (await getPublishedPosts())
     .filter((item) => item.slug !== post.slug)
     .slice(0, 2);
-
   return (
     <article className="section">
       <JsonLd
@@ -61,7 +149,7 @@ export default async function PostPage({ params }: Props) {
             : `${SITE_URL}${post.image}`,
           author: {
             "@type": "Person",
-            name: "Muhammad Tahir",
+            name: AUTHOR_NAME,
           },
           publisher: {
             "@type": "Organization",
@@ -98,50 +186,18 @@ export default async function PostPage({ params }: Props) {
         </div>
         <PostSections sections={post.sections} />
 
-        <div
-          className="author-box"
-          style={{
-            marginTop: 48,
-            padding: "28px 24px",
-            backgroundColor: "#f8fafc",
-            border: "1px solid #e2e8f0",
-            borderRadius: "12px",
-            display: "flex",
-            flexDirection: "column",
-            gap: "6px",
-          }}
-        >
-          <h3
-            style={{
-              margin: 0,
-              fontSize: "1.25rem",
-              fontWeight: 700,
-              color: "#0f172a",
-            }}
-          >
-            Muhammad Tahir
-          </h3>
-          <p
-            style={{
-              margin: 0,
-              color: "#64748b",
-              fontSize: "0.9rem",
-              fontWeight: 500,
-            }}
-          >
-            Creator of Snow Day Calculator
-          </p>
-          <p
-            style={{
-              margin: "10px 0 0",
-              lineHeight: 1.65,
-              color: "#334155",
-              fontSize: "0.975rem",
-            }}
-          >
-            I work on Snow Day Calculator to help families in the United States and Canada understand snow day chances, winter weather, and possible school closures.
-          </p>
-        </div>
+        <style dangerouslySetInnerHTML={{ __html: AUTHOR_BOX_CSS }} />
+        <aside className="author-box" aria-label="About the author">
+          <div className="author-box__avatar" aria-hidden="true">
+            {AUTHOR_INITIALS}
+          </div>
+          <div className="author-box__body">
+            <p className="author-box__eyebrow">Written by</p>
+            <p className="author-box__name">{AUTHOR_NAME}</p>
+            <p className="author-box__role">{AUTHOR_ROLE}</p>
+            <p className="author-box__bio">{AUTHOR_BIO}</p>
+          </div>
+        </aside>
 
         <div className="callout" style={{ marginTop: 40 }}>
           <p>
