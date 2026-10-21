@@ -16,10 +16,10 @@ import { SITE_NAME, SITE_URL, currentSeason } from "@/lib/site";
 export const revalidate = 3600;
 
 export async function generateMetadata(): Promise<Metadata> {
-  const season = currentSeason();
-  const title = `Snow Day Calculator ${season}: Will School Close Tomorrow?`;
+  const title = "Snow Day Calculator: Will Schools Close Tomorrow?";
   const description =
-    `Free snow day calculator for ${season} for the USA and Canada. Enter your ZIP or postal code to see your school closure chance from live hour by hour forecasts, black ice checks and regional school habits.`;
+    "Check your snow day chance by ZIP or postal code. Live forecast for US & Canada schools — updated hourly. See if tomorrow is a snow day.";
+
   return {
     title: { absolute: title },
     description,
