@@ -1,4 +1,3 @@
-
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
@@ -23,9 +22,7 @@ export async function generateMetadata({
   params,
 }: Props): Promise<Metadata> {
   const post = await getPostBySlug((await params).slug);
-
   if (!post) return {};
-
   return {
     title: post.title,
     description: post.description,
@@ -44,9 +41,7 @@ export async function generateMetadata({
 
 export default async function PostPage({ params }: Props) {
   const post = await getPostBySlug((await params).slug);
-
   if (!post) notFound();
-
   const more = (await getPublishedPosts())
     .filter((item) => item.slug !== post.slug)
     .slice(0, 2);
@@ -65,8 +60,8 @@ export default async function PostPage({ params }: Props) {
             ? post.image
             : `${SITE_URL}${post.image}`,
           author: {
-            "@type": "Organization",
-            name: SITE_NAME,
+            "@type": "Person",
+            name: "Muhammad Tahir",
           },
           publisher: {
             "@type": "Organization",
@@ -75,16 +70,13 @@ export default async function PostPage({ params }: Props) {
           mainEntityOfPage: `${SITE_URL}/blog/${post.slug}`,
         }}
       />
-
       <div className="container prose">
         <nav className="breadcrumbs" aria-label="Breadcrumb">
           <Link href="/">Home</Link> / <Link href="/blog">Blog</Link>
         </nav>
-
         <h1 style={{ fontSize: "clamp(2rem, 4.5vw, 3rem)" }}>
           {post.title}
         </h1>
-
         <p className="post-meta">
           {new Date(`${post.date}T12:00:00Z`).toLocaleDateString("en-US", {
             month: "long",
@@ -94,7 +86,6 @@ export default async function PostPage({ params }: Props) {
           })}{" "}
           · {post.readMinutes} min read
         </p>
-
         <div className="post-hero">
           <Image
             src={post.image}
@@ -105,8 +96,29 @@ export default async function PostPage({ params }: Props) {
             unoptimized
           />
         </div>
-
         <PostSections sections={post.sections} />
+
+        <div
+          className="author-box"
+          style={{
+            marginTop: 48,
+            padding: "24px 0",
+            borderTop: "1px solid #e5e7eb",
+            display: "flex",
+            flexDirection: "column",
+            gap: "8px",
+          }}
+        >
+          <h3 style={{ margin: 0, fontSize: "1.15rem", fontWeight: 600 }}>
+            Muhammad Tahir
+          </h3>
+          <p style={{ margin: 0, color: "#6b7280", fontSize: "0.95rem" }}>
+            Creator of Snow Day Calculator
+          </p>
+          <p style={{ margin: "8px 0 0", lineHeight: 1.6 }}>
+            I work on Snow Day Calculator to help families in the United States and Canada understand snow day chances, winter weather, and possible school closures.
+          </p>
+        </div>
 
         <div className="callout" style={{ marginTop: 40 }}>
           <p>
@@ -115,11 +127,9 @@ export default async function PostPage({ params }: Props) {
             your ZIP or postal code.
           </p>
         </div>
-
         {more.length > 0 && (
           <>
             <h2 style={{ fontSize: "1.4rem" }}>Keep reading</h2>
-
             <ul>
               {more.map((item) => (
                 <li key={item.slug}>
