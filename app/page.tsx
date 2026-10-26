@@ -16,9 +16,9 @@ import { SITE_NAME, SITE_URL, currentSeason } from "@/lib/site";
 export const revalidate = 3600;
 
 export async function generateMetadata(): Promise<Metadata> {
-  const title = "Snow Day Calculator: Will Schools Close Tomorrow?";
+  const title = "Snow Day Calculator & Predictor: Will School Close Tomorrow?";
   const description =
-    "Check your snow day chance by ZIP or postal code. Live forecast for US & Canada schools — updated hourly. See if tomorrow is a snow day.";
+    "Free snow day calculator & predictor for the US and Canada. Enter your ZIP or postal code to see your chance of a snow day tomorrow, updated hourly.";
 
   return {
     title: { absolute: title },
