@@ -25,7 +25,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const city = getCity((await params).city);
   if (!city) return {};
   const title = `${city.name} Snow Day Calculator: Will ${city.name} Schools Close Tomorrow?`;
-  const description = `Live snow day chance for ${city.name}, ${city.region}. See tomorrow's closure odds for ${city.district} from the hour by hour forecast plus local winter notes.`;
+  const description = `Live snow day predictor for ${city.name}, ${city.region}. See tomorrow's closure odds for ${city.district} from the hour by hour forecast plus local winter notes.`;
   return {
     title: { absolute: title },
     description,
