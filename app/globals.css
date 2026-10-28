@@ -239,6 +239,56 @@ html[data-theme="dark"] .hero-snow i { background: #e0f2fe; opacity: 0.45; }
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 html[data-theme="dark"] .gradient-text { background-image: linear-gradient(120deg, #7dd3fc 10%, #a5b4fc 90%); }
+/* Animated hero title: both phrases stacked in one grid cell */
+.animated-hero-title { display: grid; position: relative; }
+.hero-title-first,
+.hero-title-second { grid-area: 1 / 1; text-wrap: balance; }
+
+/* Phrase 1: soft blur-in on load, then blurs away at 5s */
+.hero-title-first {
+  animation: heroTitleOut 0.8s cubic-bezier(0.4, 0, 0.2, 1) 5s forwards;
+}
+/* Phrase 2: in the HTML from the start, rises out of a blur at 5s and stays */
+.hero-title-second {
+  opacity: 0;
+  animation: heroTitleIn 1.1s cubic-bezier(0.2, 0.8, 0.2, 1) 5.2s forwards;
+}
+
+/* A soft glow pulse on "Snow Day" right after it appears */
+.hero-title-second .gradient-text {
+  animation: heroGlow 1.8s ease-in-out 5.7s both;
+}
+
+/* A thin gradient line draws itself under the title (sits in the existing margin, so no layout shift) */
+.animated-hero-title::after {
+  content: "";
+  position: absolute; left: 50%; bottom: -10px;
+  width: 0; height: 3px; border-radius: 3px;
+  transform: translateX(-50%);
+  background: linear-gradient(90deg, var(--primary), var(--accent));
+  animation: heroLine 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) 5.7s forwards;
+}
+
+@keyframes heroIntro {
+  from { opacity: 0; filter: blur(12px); transform: translateY(14px) scale(0.97); }
+  to   { opacity: 1; filter: blur(0);    transform: translateY(0) scale(1); }
+}
+@keyframes heroTitleOut {
+  from { opacity: 1; filter: blur(0);    transform: translateY(0) scale(1); letter-spacing: -0.035em; }
+  to   { opacity: 0; filter: blur(10px); transform: translateY(-14px) scale(1.03); letter-spacing: 0.02em; }
+}
+@keyframes heroTitleIn {
+  from { opacity: 0; filter: blur(12px); transform: translateY(18px) scale(0.96); }
+  to   { opacity: 1; filter: blur(0);    transform: translateY(0) scale(1); }
+}
+@keyframes heroGlow {
+  0%, 100% { filter: drop-shadow(0 0 0 rgba(14, 165, 233, 0)); }
+  50%      { filter: drop-shadow(0 0 16px rgba(14, 165, 233, 0.6)); }
+}
+@keyframes heroLine {
+  from { width: 0; opacity: 0; }
+  to   { width: 110px; opacity: 1; }
+}
 .hero-sub { font-size: clamp(1.02rem, 1.8vw, 1.18rem); color: var(--muted); max-width: 640px; margin: 0 auto; }
 
 .calculator-card {
