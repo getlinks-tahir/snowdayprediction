@@ -77,9 +77,14 @@ export default function HomePage() {
         <div className="container">
           <div className="hero-copy">
             <span className="pill"><span className="live-dot" /> Live forecasts for the {season} school year</span>
-            <h1 id="hero-title">
-              Will You Get a <span className="gradient-text">Snow Day</span> Tomorrow?
-            </h1>
+           <h1 id="hero-title" className="animated-hero-title">
+  <span className="hero-title-first">
+    <span className="gradient-text">Snow Day Calculator</span>
+  </span>{" "}
+  <span className="hero-title-second">
+    Will You Get a <span className="gradient-text">Snow Day</span> Tomorrow?
+  </span>
+</h1>
             <p className="hero-sub">
               Type your ZIP or postal code. We check every hour of the forecast from 3 AM to 7 AM, look for black ice
               and adjust for how your area handles snow. One tap. No sliders.
