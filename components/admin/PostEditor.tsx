@@ -5,13 +5,12 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import PostSections from "@/components/PostSections";
 import { checkSlugAvailable, savePost } from "@/lib/admin/actions";
-import { uploadBlogImage } from "@/lib/admin/upload-actions";
 import { blocksToSectionInputs, sectionsToBlocks, toPostSection, type EditorBlock } from "@/lib/admin/blocks";
 import type { PostInput, PostSection, SaveMode } from "@/lib/admin/types";
 import {
   SLUG_RE, estimateReadMinutes, formatPostDate, isValidDate, isValidImage, slugify, todayISO,
 } from "@/lib/admin/validators";
-import BlockCanvas from "./BlockCanvas";
+import BlockCanvas, { IMAGE_SIZE_LABEL, ImagePicker } from "./BlockCanvas";
 import ConfirmDialog from "./ConfirmDialog";
 import "./block-editor.css";
 import Icon from "./Icon";
@@ -44,6 +43,7 @@ export default function PostEditor({ initial, tagSuggestions }: { initial: Edito
   const [pending, startTransition] = useTransition();
   const isNew = initial === null;
   const imageRef = useRef<HTMLInputElement>(null);
+  const titleRef = useRef<HTMLTextAreaElement>(null);
 
   const [id, setId] = useState<number | undefined>(initial?.id);
   const [published, setPublishedState] = useState(initial?.published ?? false);
@@ -60,7 +60,6 @@ export default function PostEditor({ initial, tagSuggestions }: { initial: Edito
   const [image, setImage] = useState(initial?.image ?? "");
   const [imageAlt, setImageAlt] = useState(initial?.imageAlt ?? "");
   const [imageBroken, setImageBroken] = useState(false);
-  const [uploadingImage, setUploadingImage] = useState(false);
 
   const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
   const [blocks, setBlocks] = useState<EditorBlock[]>(() => sectionsToBlocks(initial?.sections));
@@ -69,6 +68,22 @@ export default function PostEditor({ initial, tagSuggestions }: { initial: Edito
   const [issues, setIssues] = useState<string[]>([]);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [confirmUnpublish, setConfirmUnpublish] = useState(false);
+
+  // Editor-only look: its own light/dark switch and a distraction-free focus mode.
+  const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [focusMode, setFocusMode] = useState(false);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("be-theme");
+      if (saved === "dark" || saved === "light") { setTheme(saved); return; }
+    } catch { /* storage unavailable */ }
+    setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+  }, []);
+  function toggleTheme() {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    try { localStorage.setItem("be-theme", next); } catch { /* ignore */ }
+  }
 
   const sectionInputs = useMemo(() => blocksToSectionInputs(blocks), [blocks]);
   const previewSections = useMemo(
@@ -107,48 +122,15 @@ export default function PostEditor({ initial, tagSuggestions }: { initial: Edito
   }, [slug, id, initial]);
 
   useEffect(() => { setImageBroken(false); }, [image]);
-  
-async function handleFeaturedImageUpload(
-  event: React.ChangeEvent<HTMLInputElement>
-) {
-  const file = event.target.files?.[0];
-  if (!file) return;
 
-  if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type)) {
-    toast.push("Choose a JPG, PNG, WebP, or GIF image.", "error");
-    event.target.value = "";
-    return;
-  }
+  // Keep the title box as tall as its text, including on first load.
+  useEffect(() => {
+    const el = titleRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [title, view]);
 
-  if (file.size > 5 * 1024 * 1024) {
-    toast.push("Image must be 5 MB or smaller.", "error");
-    event.target.value = "";
-    return;
-  }
-
-  setUploadingImage(true);
-
-  try {
-    const formData = new FormData();
-    formData.append("file", file);
-
-    const result = await uploadBlogImage(formData);
-
-    if (!result.ok) {
-      toast.push(result.error, "error");
-      return;
-    }
-
-    setImage(result.url);
-    setImageBroken(false);
-    toast.push("Image uploaded successfully.", "success");
-  } catch {
-    toast.push("Image upload failed. Please try again.", "error");
-  } finally {
-    setUploadingImage(false);
-    event.target.value = "";
-  }
-}
   function run(mode: SaveMode) {
     if (pending) return;
     setIssues([]);
@@ -204,7 +186,7 @@ async function handleFeaturedImageUpload(
   const descLen = description.trim().length;
 
   return (
-    <div className="a-editor">
+    <div className={`a-editor ${focusMode ? "is-focus" : ""}`} data-be-theme={theme}>
       <div className="a-editorbar">
         <div className="a-editorbar-left">
           <StatusBadge published={published} />
@@ -213,6 +195,12 @@ async function handleFeaturedImageUpload(
           </span>
         </div>
         <div className="a-editorbar-right">
+          <button type="button" className="btn btn-ghost btn-sm" onClick={toggleTheme} aria-pressed={theme === "dark"}>
+            {theme === "dark" ? "Light mode" : "Dark mode"}
+          </button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setFocusMode((v) => !v)} aria-pressed={focusMode} disabled={view === "preview"}>
+            {focusMode ? "Exit focus" : "Focus mode"}
+          </button>
           {id !== undefined && (
             <Link className="btn btn-ghost btn-sm" href={`/admin/posts/${id}/preview`} target="_blank" title={dirty ? "Preview shows the last saved version" : "Open preview"}>
               <Icon name="eye" /> Preview
@@ -261,151 +249,141 @@ async function handleFeaturedImageUpload(
           </div>
         </div>
       ) : (
-        <div className="a-editor-grid">
+        <div className={`a-editor-grid ${focusMode ? "is-solo" : ""}`}>
           <div className="a-col-main">
-            <button type="button" className="a-be-feature" onClick={() => imageRef.current?.focus()}>
-              {imageOk && !imageBroken ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={image.trim()} alt={imageAlt || "Feature image"} onError={() => setImageBroken(true)} />
-              ) : (
-                <><Icon name="plus" /> Add feature image</>
-              )}
-            </button>
-            <label className="a-field">
-              <span className="sr-only">Title</span>
-              <textarea
-                className="a-be-title"
-                rows={1}
-                value={title}
-                maxLength={200}
-                placeholder="Post title"
-                aria-invalid={Boolean(fieldErrors.title)}
-                onChange={(e) => {
-                  setTitle(e.target.value);
-                  if (!slugTouched) setSlug(slugify(e.target.value));
-                  const el = e.currentTarget;
-                  el.style.height = "auto";
-                  el.style.height = `${el.scrollHeight}px`;
-                }}
+            <div className="a-sheet">
+              <ImagePicker
+                variant="cover"
+                hideUrl
+                url={image}
+                onUrl={setImage}
+                onBroken={setImageBroken}
+                onError={(message) => toast.push(message, "error")}
+                onUploaded={() => toast.push("Image uploaded.", "success")}
               />
-              {fieldErrors.title && <span className="a-error">{fieldErrors.title}</span>}
-            </label>
-            {fieldErrors.sections && <p className="a-error">{fieldErrors.sections}</p>}
-            <BlockCanvas blocks={blocks} onChange={setBlocks} />
+              <label className="a-field a-titlefield">
+                <span className="sr-only">Title</span>
+                <textarea
+                  ref={titleRef}
+                  className="a-be-title"
+                  rows={1}
+                  value={title}
+                  maxLength={200}
+                  placeholder="Post title"
+                  aria-invalid={Boolean(fieldErrors.title)}
+                  onChange={(e) => {
+                    setTitle(e.target.value);
+                    if (!slugTouched) setSlug(slugify(e.target.value));
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      document.querySelector<HTMLElement>(".a-be .a-be-text")?.focus();
+                    }
+                  }}
+                />
+                {fieldErrors.title && <span className="a-error">{fieldErrors.title}</span>}
+              </label>
+              {fieldErrors.sections && <p className="a-error">{fieldErrors.sections}</p>}
+              <BlockCanvas blocks={blocks} onChange={setBlocks} theme={theme} />
+            </div>
           </div>
 
-          <aside className="a-col-side">
-            <div className="glass a-card">
-              <h3>Search listing</h3>
-              <label className="a-field">
-                <span className="a-label">URL slug</span>
-                <div className="a-slug">
-                  <span className="a-slug-prefix">/blog/</span>
-                  <input className="a-input" value={slug} maxLength={100} readOnly={slugLocked} aria-invalid={Boolean(fieldErrors.slug) || slugState === "invalid" || slugState === "taken"}
-                    onChange={(e) => { setSlugTouched(true); setSlug(e.target.value.toLowerCase()); }}
-                    onBlur={() => setSlug((s) => slugify(s))} placeholder="how-much-snow-closes-school" />
-                  {slugLocked && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSlugUnlocked(true)}><Icon name="lock" /> Unlock</button>}
-                </div>
-                {slugLocked && <span className="a-hint">Locked because this post is live. Changing the slug breaks the old URL and any links to it.</span>}
-                {!slugLocked && published && slug !== initial?.slug && <span className="a-error">Warning: changing the slug of a live post breaks its old URL.</span>}
-                {slugState === "checking" && <span className="a-hint">Checking…</span>}
-                {slugState === "free" && <span className="a-ok">Available</span>}
-                {slugState === "taken" && <span className="a-error">That slug is already used by another post.</span>}
-                {slugState === "invalid" && <span className="a-error">Use lowercase letters, numbers and single hyphens only.</span>}
-                {fieldErrors.slug && slugState !== "taken" && <span className="a-error">{fieldErrors.slug}</span>}
-              </label>
-              <label className="a-field">
-                <span className="a-label">
-                  Meta description
-                  <span className={`a-counter ${descLen > 160 ? "is-warn" : descLen >= 120 ? "is-good" : ""}`}>{descLen}/500 · aim for 120–160</span>
-                </span>
-                <textarea className="a-input a-textarea" rows={3} value={description} maxLength={500} onChange={(e) => setDescription(e.target.value)} aria-invalid={Boolean(fieldErrors.description)}
-                  placeholder="One or two sentences that make someone want to click." />
-                {fieldErrors.description && <span className="a-error">{fieldErrors.description}</span>}
-              </label>
-              <SnippetPreview title={title} slug={slug} description={description} />
-            </div>
-
-            <div className="glass a-card">
-              <h3>Details</h3>
-              <label className="a-field">
-                <span className="a-label">Publish date</span>
-                <input className="a-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-invalid={Boolean(fieldErrors.date)} />
-                {fieldErrors.date && <span className="a-error">{fieldErrors.date}</span>}
-              </label>
-              <label className="a-field">
-                <span className="a-label">Updated date <em>(optional)</em></span>
-                <div className="a-inline">
-                  <input className="a-input" type="date" value={updated} onChange={(e) => setUpdated(e.target.value)} aria-invalid={Boolean(fieldErrors.updated)} />
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setUpdated(todayISO())}>Today</button>
-                </div>
-                {fieldErrors.updated && <span className="a-error">{fieldErrors.updated}</span>}
-                <span className="a-hint">Used for “last modified” in search results and the sitemap.</span>
-              </label>
-              <div className="a-field">
-                <span className="a-label">Read time (minutes)</span>
-                <div className="a-inline">
-                  <input className="a-input" type="number" min={1} max={180} value={autoRead ? String(readMinutes) : readText} disabled={autoRead}
-                    onChange={(e) => setReadText(e.target.value)} aria-label="Read time in minutes" aria-invalid={Boolean(fieldErrors.readMinutes)} />
-                  <label className="a-check"><input type="checkbox" checked={autoRead} onChange={(e) => { if (!e.target.checked) setReadText(String(readMinutes || 5)); setAutoRead(e.target.checked); }} /> Auto</label>
-                </div>
-                {fieldErrors.readMinutes && <span className="a-error">{fieldErrors.readMinutes}</span>}
+          {!focusMode && (
+            <aside className="a-col-side">
+              <div className="glass a-card">
+                <h3>Search listing</h3>
+                <label className="a-field">
+                  <span className="a-label">URL slug</span>
+                  <div className="a-slug">
+                    <span className="a-slug-prefix">/blog/</span>
+                    <input className="a-input" value={slug} maxLength={100} readOnly={slugLocked} aria-invalid={Boolean(fieldErrors.slug) || slugState === "invalid" || slugState === "taken"}
+                      onChange={(e) => { setSlugTouched(true); setSlug(e.target.value.toLowerCase()); }}
+                      onBlur={() => setSlug((s) => slugify(s))} placeholder="how-much-snow-closes-school" />
+                    {slugLocked && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSlugUnlocked(true)}><Icon name="lock" /> Unlock</button>}
+                  </div>
+                  {slugLocked && <span className="a-hint">Locked because this post is live. Changing the slug breaks the old URL and any links to it.</span>}
+                  {!slugLocked && published && slug !== initial?.slug && <span className="a-error">Warning: changing the slug of a live post breaks its old URL.</span>}
+                  {slugState === "checking" && <span className="a-hint">Checking…</span>}
+                  {slugState === "free" && <span className="a-ok">Available</span>}
+                  {slugState === "taken" && <span className="a-error">That slug is already used by another post.</span>}
+                  {slugState === "invalid" && <span className="a-error">Use lowercase letters, numbers and single hyphens only.</span>}
+                  {fieldErrors.slug && slugState !== "taken" && <span className="a-error">{fieldErrors.slug}</span>}
+                </label>
+                <label className="a-field">
+                  <span className="a-label">
+                    Meta description
+                    <span className={`a-counter ${descLen > 160 ? "is-warn" : descLen >= 120 ? "is-good" : ""}`}>{descLen}/500 · aim for 120–160</span>
+                  </span>
+                  <textarea className="a-input a-textarea" rows={3} value={description} maxLength={500} onChange={(e) => setDescription(e.target.value)} aria-invalid={Boolean(fieldErrors.description)}
+                    placeholder="One or two sentences that make someone want to click." />
+                  {fieldErrors.description && <span className="a-error">{fieldErrors.description}</span>}
+                </label>
+                <SnippetPreview title={title} slug={slug} description={description} />
               </div>
-            </div>
 
-            <div className="glass a-card">
-              <h3>Featured image</h3>
-              
-<div className="a-field">
-  <span className="a-label">Upload from your computer</span>
-  <input
-    className="a-input"
-    type="file"
-    accept="image/jpeg,image/png,image/webp,image/gif"
-    disabled={uploadingImage}
-    onChange={handleFeaturedImageUpload}
-  />
-  {uploadingImage && (
-    <span className="a-hint">Uploading image...</span>
-  )}
-</div>
-              <label className="a-field">
-                <span className="a-label">Image URL</span>
-                <input ref={imageRef} className="a-input" value={image} onChange={(e) => setImage(e.target.value)} placeholder="/blog/snow.svg or https://…" aria-invalid={Boolean(fieldErrors.image)} />
-                {fieldErrors.image && <span className="a-error">{fieldErrors.image}</span>}
-                <span className="a-hint">Paste a path on your site or a full https:// link.</span>
-              </label>
-              {imageOk && !imageBroken && (
-                <div className="a-thumb">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={image.trim()} alt={imageAlt || "Image preview"} onError={() => setImageBroken(true)} />
+              <div className="glass a-card">
+                <h3>Featured image</h3>
+                <p className="a-hint">Upload it in the cover area above the title. Every image is cropped to 16:9 ({IMAGE_SIZE_LABEL}) automatically, so all posts match.</p>
+                <label className="a-field">
+                  <span className="a-label">Image URL</span>
+                  <input ref={imageRef} className="a-input" value={image} onChange={(e) => setImage(e.target.value)} placeholder="/blog/snow.svg or https://…" aria-invalid={Boolean(fieldErrors.image)} />
+                  {fieldErrors.image && <span className="a-error">{fieldErrors.image}</span>}
+                  <span className="a-hint">Filled in for you after an upload. You can also paste a site path or a full https:// link.</span>
+                </label>
+                {imageOk && imageBroken && <p className="a-error">The image couldn’t be loaded. Check the URL.</p>}
+                <label className="a-field">
+                  <span className="a-label">Alt text <span className="a-counter">{imageAlt.length}/300</span></span>
+                  <textarea className="a-input a-textarea" rows={2} value={imageAlt} maxLength={300} onChange={(e) => setImageAlt(e.target.value)} aria-invalid={Boolean(fieldErrors.imageAlt)}
+                    placeholder="Describe the image for people who can't see it" />
+                  {fieldErrors.imageAlt && <span className="a-error">{fieldErrors.imageAlt}</span>}
+                </label>
+              </div>
+
+              <div className="glass a-card">
+                <h3>Details</h3>
+                <label className="a-field">
+                  <span className="a-label">Publish date</span>
+                  <input className="a-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-invalid={Boolean(fieldErrors.date)} />
+                  {fieldErrors.date && <span className="a-error">{fieldErrors.date}</span>}
+                </label>
+                <label className="a-field">
+                  <span className="a-label">Updated date <em>(optional)</em></span>
+                  <div className="a-inline">
+                    <input className="a-input" type="date" value={updated} onChange={(e) => setUpdated(e.target.value)} aria-invalid={Boolean(fieldErrors.updated)} />
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => setUpdated(todayISO())}>Today</button>
+                  </div>
+                  {fieldErrors.updated && <span className="a-error">{fieldErrors.updated}</span>}
+                  <span className="a-hint">Used for “last modified” in search results and the sitemap.</span>
+                </label>
+                <div className="a-field">
+                  <span className="a-label">Read time (minutes)</span>
+                  <div className="a-inline">
+                    <input className="a-input" type="number" min={1} max={180} value={autoRead ? String(readMinutes) : readText} disabled={autoRead}
+                      onChange={(e) => setReadText(e.target.value)} aria-label="Read time in minutes" aria-invalid={Boolean(fieldErrors.readMinutes)} />
+                    <label className="a-check"><input type="checkbox" checked={autoRead} onChange={(e) => { if (!e.target.checked) setReadText(String(readMinutes || 5)); setAutoRead(e.target.checked); }} /> Auto</label>
+                  </div>
+                  {fieldErrors.readMinutes && <span className="a-error">{fieldErrors.readMinutes}</span>}
                 </div>
-              )}
-              {imageOk && imageBroken && <p className="a-error">The image couldn’t be loaded. Check the URL.</p>}
-              <label className="a-field">
-                <span className="a-label">Alt text <span className="a-counter">{imageAlt.length}/300</span></span>
-                <textarea className="a-input a-textarea" rows={2} value={imageAlt} maxLength={300} onChange={(e) => setImageAlt(e.target.value)} aria-invalid={Boolean(fieldErrors.imageAlt)}
-                  placeholder="Describe the image for people who can't see it" />
-                {fieldErrors.imageAlt && <span className="a-error">{fieldErrors.imageAlt}</span>}
-              </label>
-            </div>
+              </div>
 
-            <div className="glass a-card">
-              <h3>Tags</h3>
-              <TagInput value={tags} onChange={setTags} suggestions={tagSuggestions} />
-              {fieldErrors.tags && <span className="a-error">{fieldErrors.tags}</span>}
-            </div>
+              <div className="glass a-card">
+                <h3>Tags</h3>
+                <TagInput value={tags} onChange={setTags} suggestions={tagSuggestions} />
+                {fieldErrors.tags && <span className="a-error">{fieldErrors.tags}</span>}
+              </div>
 
-            <div className="glass a-card">
-              <h3>Ready to publish?</h3>
-              <ul className="a-checklist">
-                {checks.map((c) => (
-                  <li key={c.label} data-ok={c.ok}><span className="a-checkmark" aria-hidden="true">{c.ok ? <Icon name="check" className="a-icon a-icon-sm" /> : null}</span>{c.label}<span className="sr-only">{c.ok ? " (done)" : " (missing)"}</span></li>
-                ))}
-              </ul>
-              <p className="a-hint">{ready ? "Everything needed is in place." : "Drafts can be saved with missing items. Publishing needs all of them."}</p>
-            </div>
-          </aside>
+              <div className="glass a-card">
+                <h3>Ready to publish?</h3>
+                <ul className="a-checklist">
+                  {checks.map((c) => (
+                    <li key={c.label} data-ok={c.ok}><span className="a-checkmark" aria-hidden="true">{c.ok ? <Icon name="check" className="a-icon a-icon-sm" /> : null}</span>{c.label}<span className="sr-only">{c.ok ? " (done)" : " (missing)"}</span></li>
+                  ))}
+                </ul>
+                <p className="a-hint">{ready ? "Everything needed is in place." : "Drafts can be saved with missing items. Publishing needs all of them."}</p>
+              </div>
+            </aside>
+          )}
         </div>
       )}
 
