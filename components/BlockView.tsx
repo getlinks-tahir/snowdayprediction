@@ -15,8 +15,23 @@ import {
  */
 export default function BlockView({ block, theme = "auto" }: { block: ContentBlock; theme?: "auto" | "light" | "dark" }) {
   switch (block.type) {
-    case "paragraph":
-      return <p style={{ margin: "0 0 1rem" }}>{block.text}</p>;
+    case "paragraph": {
+  const paragraphs = block.text
+    .replace(/\r\n?/g, "\n")
+    .split(/\n[ \t]*\n+/)
+    .map((text) => text.trim())
+    .filter(Boolean);
+
+  return (
+    <div style={{ marginBottom: "1rem" }}>
+      {paragraphs.map((text, i) => (
+        <p key={i} style={{ margin: "0 0 1rem" }}>
+          {text}
+        </p>
+      ))}
+    </div>
+  );
+}
     case "heading": {
       const Tag = block.level === 1 ? "h1" : block.level === 3 ? "h3" : "h2";
       const size = block.level === 1 ? "2rem" : block.level === 3 ? "1.25rem" : "1.6rem";
