@@ -6,6 +6,7 @@ import {
   useState,
   type ClipboardEvent as ReactPaste,
   type KeyboardEvent as ReactKey,
+  type FormEvent,
 } from "react";
 import {
   audioEmbed,
@@ -24,9 +25,6 @@ import "./block-editor.css";
 
 /* ------------------------------------------------------------------ */
 /*  Standard image size                                                */
-/*  Every uploaded image (featured, inline, gallery) is cropped to     */
-/*  16:9 and resized to 1600 x 900 before it reaches the server.       */
-/*  Animated GIFs are uploaded untouched so they keep their animation. */
 /* ------------------------------------------------------------------ */
 export const IMAGE_WIDTH = 1600;
 export const IMAGE_HEIGHT = 900;
@@ -175,10 +173,20 @@ function shortcut(text: string): { type: ContentBlock["type"]; level?: HeadingLe
 }
 
 /* ------------------------------------------------------------------ */
-/*  Editable text                                                      */
+/*  Editable text (Now supports Rich Text HTML)                        */
 /* ------------------------------------------------------------------ */
-function readText(el: HTMLElement): string {
-  return el.innerText.replace(/\u00a0/g, " ").replace(/\n$/, "");
+function readHtml(el: HTMLElement): string {
+  let html = el.innerHTML;
+  // Clean up empty states that break :empty CSS pseudo-class
+  if (html === '<br>' || html === '<div><br></div>' || html === '<p><br></p>' || html === '&nbsp;' || html === ' ') {
+    el.innerHTML = '';
+    return '';
+  }
+  return html.replace(/\u00a0/g, " ").replace(/\n$/, "");
+}
+
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim();
 }
 
 function Editable({
@@ -198,7 +206,7 @@ function Editable({
   useEffect(() => {
     const el = ref.current;
     if (!el || document.activeElement === el) return;
-    if (readText(el) !== value) el.innerText = value;
+    if (readHtml(el) !== value) el.innerHTML = value;
   }, [value]);
 
   useEffect(() => {
@@ -214,15 +222,18 @@ function Editable({
   }, [focus, blockId]);
 
   function onPaste(e: ReactPaste<HTMLDivElement>) {
-    // Always paste as plain text so Word / Google Docs formatting never leaks in.
     e.preventDefault();
     const text = e.clipboardData.getData("text/plain").replace(/\r\n/g, "\n");
     const chunks = text.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
-    if (onPasteBlocks && chunks.length > 1 && readText(e.currentTarget).trim() === "") {
+    if (onPasteBlocks && chunks.length > 1 && readHtml(e.currentTarget).trim() === "") {
       onPasteBlocks(chunks);
       return;
     }
     document.execCommand("insertText", false, text);
+  }
+
+  function onInput(e: React.FormEvent<HTMLDivElement>) {
+    onChange(readHtml(e.currentTarget));
   }
 
   return (
@@ -235,8 +246,16 @@ function Editable({
       spellCheck
       data-placeholder={placeholder}
       className={`a-be-text ${className ?? ""}`}
-      onInput={(e) => onChange(readText(e.currentTarget))}
-      onKeyDown={onKeyDown}
+      onInput={onInput}
+      onKeyDown={(e) => {
+        // Keyboard shortcuts for rich text
+        if ((e.metaKey || e.ctrlKey) && !e.shiftKey) {
+          if (e.key === 'b') { e.preventDefault(); document.execCommand('bold'); e.currentTarget.dispatchEvent(new Event('input', { bubbles: true })); return; }
+          if (e.key === 'i') { e.preventDefault(); document.execCommand('italic'); e.currentTarget.dispatchEvent(new Event('input', { bubbles: true })); return; }
+          if (e.key === 'u') { e.preventDefault(); document.execCommand('underline'); e.currentTarget.dispatchEvent(new Event('input', { bubbles: true })); return; }
+        }
+        onKeyDown?.(e);
+      }}
       onPaste={onPaste}
     />
   );
@@ -255,7 +274,177 @@ function useTheme(): "light" | "dark" {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Image picker (shared by featured image, image block, gallery)      */
+/*  Floating Toolbar (Bubble Menu)                                     */
+/* ------------------------------------------------------------------ */
+type BubbleState = {
+  rect: DOMRect;
+  editorEl: HTMLElement;
+  savedRange?: Range;
+};
+
+function FloatingToolbar() {
+  const [state, setState] = useState<BubbleState | null>(null);
+  const [showLink, setShowLink] = useState(false);
+  const [linkUrl, setLinkUrl] = useState("");
+  const linkInputRef = useRef<HTMLInputElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const checkSelection = () => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || !sel.toString().trim()) {
+        setTimeout(() => {
+          if (!document.querySelector('.a-be-bubble:hover') && !document.querySelector('.a-be-bubble-link:hover')) {
+            setState(null);
+            setShowLink(false);
+          }
+        }, 100);
+        return;
+      }
+      const range = sel.getRangeAt(0);
+      const editorEl = range.commonAncestorContainer.parentElement?.closest('.a-be-text');
+      if (editorEl) {
+        setState({ rect: range.getBoundingClientRect(), editorEl: editorEl as HTMLElement });
+      } else {
+        setState(null);
+        setShowLink(false);
+      }
+    };
+
+    document.addEventListener('mouseup', checkSelection);
+    document.addEventListener('keyup', checkSelection);
+    document.addEventListener('scroll', checkSelection, true);
+
+    return () => {
+      document.removeEventListener('mouseup', checkSelection);
+      document.removeEventListener('keyup', checkSelection);
+      document.removeEventListener('scroll', checkSelection, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (showLink && linkInputRef.current) {
+      linkInputRef.current.focus();
+    }
+  }, [showLink]);
+
+  if (!state) return null;
+
+  const format = (cmd: string, val?: string) => {
+    document.execCommand(cmd, false, val);
+    if (cmd === 'createLink') {
+      const links = state.editorEl.querySelectorAll('a');
+      links.forEach(link => {
+        if (!link.getAttribute('target')) {
+          link.setAttribute('target', '_blank');
+          link.setAttribute('rel', 'noopener noreferrer');
+        }
+      });
+    }
+    state.editorEl.dispatchEvent(new Event('input', { bubbles: true }));
+    state.editorEl.focus();
+  };
+
+  const formatCode = () => {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      const range = sel.getRangeAt(0);
+      const text = range.toString();
+      if (text) {
+        const code = document.createElement('code');
+        code.textContent = text;
+        range.deleteContents();
+        range.insertNode(code);
+        range.setStartAfter(code);
+        range.setEndAfter(code);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        state.editorEl.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }
+  };
+
+  const handleLinkClick = () => {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      setState(prev => prev ? { ...prev, savedRange: sel.getRangeAt(0).cloneRange() } : null);
+    }
+    setShowLink(true);
+  };
+
+  const applyLink = (e: FormEvent) => {
+    e.preventDefault();
+    if (!linkUrl.trim()) {
+      format('unlink');
+    } else {
+      if (state.savedRange) {
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(state.savedRange);
+      }
+      format('createLink', linkUrl);
+    }
+    setShowLink(false);
+    setLinkUrl("");
+  };
+
+  const removeLink = () => {
+    if (state.savedRange) {
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(state.savedRange);
+    }
+    format('unlink');
+    setShowLink(false);
+    setLinkUrl("");
+  };
+
+  const spaceAbove = state.rect.top;
+  const top = spaceAbove < 60 
+    ? state.rect.bottom + 10 
+    : state.rect.top - 48;
+  const left = state.rect.left + (state.rect.width / 2);
+
+  return (
+    <div
+      ref={toolbarRef}
+      className="a-be-bubble"
+      style={{ top, left }}
+      onMouseDown={(e) => e.preventDefault()}
+    >
+      <button type="button" onMouseDown={(e) => { e.preventDefault(); format('bold'); }} aria-label="Bold"><b>B</b></button>
+      <button type="button" onMouseDown={(e) => { e.preventDefault(); format('italic'); }} aria-label="Italic"><i>I</i></button>
+      <button type="button" onMouseDown={(e) => { e.preventDefault(); format('underline'); }} aria-label="Underline"><u>U</u></button>
+      <button type="button" onMouseDown={(e) => { e.preventDefault(); format('strikeThrough'); }} aria-label="Strikethrough"><s>S</s></button>
+      <div className="sep" />
+      <button type="button" onMouseDown={(e) => { e.preventDefault(); formatCode(); }} aria-label="Code">&lt;/&gt;</button>
+      <div className="sep" />
+      <button type="button" onMouseDown={(e) => { e.preventDefault(); handleLinkClick(); }} aria-label="Link">
+        <Icon name="link" />
+      </button>
+
+      {showLink && (
+        <form className="a-be-bubble-link" onSubmit={applyLink} onMouseDown={(e) => e.stopPropagation()}>
+          <input
+            ref={linkInputRef}
+            type="url"
+            placeholder="https://example.com"
+            value={linkUrl}
+            onChange={(e) => setLinkUrl(e.target.value)}
+            onKeyDown={(e) => {
+               if (e.key === 'Escape') { setShowLink(false); state.editorEl.focus(); }
+            }}
+          />
+          <button type="submit">Link</button>
+          <button type="button" onClick={removeLink} className="is-danger">Unlink</button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Image picker                                                       */
 /* ------------------------------------------------------------------ */
 export function ImagePicker({
   url, onUrl, onError, onUploaded, onBroken, hideUrl, compact, variant,
@@ -437,14 +626,13 @@ export default function BlockCanvas({ blocks, onChange, theme: themeProp }: { bl
     const block = createBlock(type, level);
     const next = blocks.slice();
     const current = next[index];
-    if (current && current.type === "paragraph" && "text" in current && !current.text.trim()) next.splice(index, 1, block);
+    if (current && current.type === "paragraph" && "text" in current && !stripHtml(current.text).trim()) next.splice(index, 1, block);
     else next.splice(Math.min(index + 1, next.length), 0, block);
     onChange(next.length ? next : [block]);
     focusOn(focusKey(block));
     setMenu(null);
   }
 
-  /** Turns the block at `index` into another type (markdown shortcuts). */
   function convert(index: number, type: ContentBlock["type"], level?: HeadingLevel) {
     const old = blocks[index];
     if (!old) return;
@@ -630,6 +818,8 @@ export default function BlockCanvas({ blocks, onChange, theme: themeProp }: { bl
           })}
         </div>
       )}
+
+      <FloatingToolbar />
     </div>
   );
 }
@@ -670,32 +860,33 @@ function BlockBody({
     case "paragraph":
       return (
         <Editable key="paragraph" value={block.text} blockId={block.id} focus={focus} placeholder={placeholder}
-          onChange={(text) => {
-            const sc = shortcut(text);
+          onChange={(html) => {
+            const plain = stripHtml(html);
+            const sc = shortcut(plain);
             if (sc) onConvert(sc.type, sc.level);
-            else onChange({ ...block, text });
+            else onChange({ ...block, text: html });
           }}
           onPasteBlocks={onPasteBlocks}
-          onKeyDown={(e) => textKeys(e, block.text.trim() === "")} />
+          onKeyDown={(e) => textKeys(e, stripHtml(block.text).trim() === "")} />
       );
     case "heading":
       return (
         <Editable key="heading" value={block.text} blockId={block.id} focus={focus} placeholder={`Heading ${block.level}`}
           className={block.level === 1 ? "a-be-h1" : block.level === 3 ? "a-be-h3" : "a-be-h2"}
-          onChange={(text) => onChange({ ...block, text })}
-          onKeyDown={(e) => textKeys(e, block.text.trim() === "")} />
+          onChange={(html) => onChange({ ...block, text: html })}
+          onKeyDown={(e) => textKeys(e, stripHtml(block.text).trim() === "")} />
       );
     case "quote":
       return (
         <Editable key="quote" value={block.text} blockId={block.id} focus={focus} placeholder="Quote" className="a-be-quote"
-          onChange={(text) => onChange({ ...block, text })}
-          onKeyDown={(e) => textKeys(e, block.text.trim() === "")} />
+          onChange={(html) => onChange({ ...block, text: html })}
+          onKeyDown={(e) => textKeys(e, stripHtml(block.text).trim() === "")} />
       );
     case "callout":
       return (
         <div className="a-be-callout">
           <Editable key="callout" value={block.text} blockId={block.id} focus={focus} placeholder="Highlighted note"
-            onChange={(text) => onChange({ ...block, text })} />
+            onChange={(html) => onChange({ ...block, text: html })} />
         </div>
       );
     case "bulletList":
@@ -736,22 +927,22 @@ function ListBlock({
   onExitList: () => void;
   onBackspaceEmpty: () => void;
 }) {
-  function setItem(i: number, text: string) {
-    onChange({ ...block, items: block.items.map((item, n) => (n === i ? text : item)) });
+  function setItem(i: number, html: string) {
+    onChange({ ...block, items: block.items.map((item, n) => (n === i ? html : item)) });
   }
   function onKey(i: number, e: ReactKey<HTMLDivElement>) {
     const last = i === block.items.length - 1;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (block.items[i] === "" && last) {
-        onExitList(); // Enter on an empty last item leaves the list
+      if (stripHtml(block.items[i]) === "" && last) {
+        onExitList();
         return;
       }
       const items = block.items.slice();
       items.splice(i + 1, 0, "");
       onChange({ ...block, items });
       focusOn(`${block.id}-${i + 1}`);
-    } else if (e.key === "Backspace" && block.items[i] === "") {
+    } else if (e.key === "Backspace" && stripHtml(block.items[i]) === "") {
       e.preventDefault();
       if (block.items.length > 1) {
         onChange({ ...block, items: block.items.filter((_, n) => n !== i) });
@@ -766,7 +957,7 @@ function ListBlock({
       {block.items.map((item, i) => (
         <li key={`${block.id}-${i}`} className="a-be-li">
           <span className="a-be-mark" aria-hidden="true">{block.type === "numberedList" ? `${i + 1}.` : "•"}</span>
-          <Editable value={item} blockId={`${block.id}-${i}`} focus={focus} placeholder="List item" onChange={(text) => setItem(i, text)} onKeyDown={(e) => onKey(i, e)} />
+          <Editable value={item} blockId={`${block.id}-${i}`} focus={focus} placeholder="List item" onChange={(html) => setItem(i, html)} onKeyDown={(e) => onKey(i, e)} />
         </li>
       ))}
     </ul>
@@ -840,7 +1031,6 @@ function EmbedBlock({ kind, block, onChange }: { kind: "video" | "audio"; block:
   );
 }
 
-/** Iframe that grows or shrinks to exactly fit its content. */
 function AutoFrame({ title, srcDoc }: { title: string; srcDoc: string }) {
   const ref = useRef<HTMLIFrameElement>(null);
   const observer = useRef<ResizeObserver | null>(null);
@@ -849,7 +1039,7 @@ function AutoFrame({ title, srcDoc }: { title: string; srcDoc: string }) {
     const frame = ref.current;
     const doc = frame?.contentDocument;
     if (!frame || !doc?.documentElement) return;
-    frame.style.height = "0px"; // collapse first so the real content height is measured
+    frame.style.height = "0px";
     const h = Math.ceil(doc.documentElement.scrollHeight) + 2;
     frame.style.height = `${Math.min(1600, Math.max(48, h))}px`;
   }
@@ -859,7 +1049,7 @@ function AutoFrame({ title, srcDoc }: { title: string; srcDoc: string }) {
     if (!doc?.body) return;
     measure();
     observer.current?.disconnect();
-    observer.current = new ResizeObserver(measure); // catches images / fonts loading later
+    observer.current = new ResizeObserver(measure);
     observer.current.observe(doc.body);
   }
 
@@ -870,7 +1060,6 @@ function AutoFrame({ title, srcDoc }: { title: string; srcDoc: string }) {
       ref={ref}
       className="a-be-frame"
       title={title}
-      // allow-same-origin lets the editor read the height; without allow-scripts nothing inside can run.
       sandbox="allow-same-origin"
       referrerPolicy="no-referrer"
       srcDoc={srcDoc}
@@ -879,7 +1068,6 @@ function AutoFrame({ title, srcDoc }: { title: string; srcDoc: string }) {
   );
 }
 
-/** Textarea that grows with its text. */
 function AutoArea({ value, onChange, ...rest }: { value: string; onChange: (value: string) => void } & Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "onChange">) {
   const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
@@ -900,12 +1088,6 @@ function ModeTabs({ mode, setMode }: { mode: "edit" | "preview"; setMode: (m: "e
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  HTML block: code box + Convert. No iframe.                         */
-/*  The preview is drawn straight into the page inside a Shadow DOM,   */
-/*  so pasted CSS cannot leak into the editor and the height simply    */
-/*  follows the content.                                               */
-/* ------------------------------------------------------------------ */
 const BLOCKED_TAGS = "script,iframe,frame,frameset,object,embed,link,meta,base,applet,form,noscript,template";
 const URL_ATTRS = ["href", "src", "action", "formaction", "xlink:href", "poster", "srcset"];
 
@@ -916,7 +1098,6 @@ function cleanCss(css: string): string {
     .replace(/javascript\s*:/gi, "")
     .replace(/behavior\s*:[^;}]*/gi, "")
     .replace(/-moz-binding\s*:[^;}]*/gi, "")
-    // html/body/:root selectors have no meaning inside the preview, so point them at the preview itself
     .replace(/(^|[,{}\s])(html|body|:root)(?=\s*[,{])/gi, "$1:host");
 }
 
