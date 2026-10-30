@@ -300,57 +300,58 @@
 .a-be-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* ---------- Canvas ---------- */
-.a-be-canvas { display: flex; flex-direction: column; gap: 0; padding-bottom: 24px; margin-left: -60px; }
+/* Clean gutter: one slim column that only holds the + button, sitting in the sheet's left padding. */
+.a-be-canvas { display: flex; flex-direction: column; gap: 0; padding-bottom: 24px; margin-left: -40px; }
 
 .a-be-block {
   display: grid;
-  grid-template-columns: 60px minmax(0, 1fr);
+  grid-template-columns: 40px minmax(0, 1fr);
   align-items: start;
   position: relative;
   border-radius: 10px;
   padding: 3px 0;
 }
-.a-be-block.is-over { box-shadow: 0 -2px 0 0 var(--be-primary); }
 .a-be-block[data-type="heading"] { padding-top: 18px; }
 .a-be-block[data-type="quote"],
 .a-be-block[data-type="callout"] { padding-top: 8px; padding-bottom: 8px; }
 
 .a-be-gutter {
   display: flex;
-  justify-content: flex-end;
-  gap: 2px;
-  padding: 4px 6px 0 0;
+  justify-content: flex-start;
+  padding: 3px 0 0 4px;
   opacity: 0;
   transition: opacity 0.12s;
 }
+/* keep the + lined up with the first line of text for taller blocks */
+.a-be-block[data-type="heading"] .a-be-gutter { padding-top: 20px; }
+.a-be-block[data-type="quote"] .a-be-gutter,
+.a-be-block[data-type="callout"] .a-be-gutter { padding-top: 10px; }
 .a-be-block:hover .a-be-gutter,
 .a-be-block:focus-within .a-be-gutter { opacity: 1; }
 @media (hover: none) { .a-be-gutter { opacity: 1; } }
 
-.a-be-plus, .a-be-grip, .a-be-tool {
-  width: 26px; height: 26px; border-radius: 8px; border: 0; background: transparent;
+.a-be-plus {
+  width: 28px; height: 28px; border-radius: 999px; border: 0; background: transparent;
   color: var(--be-faint); display: grid; place-items: center; padding: 0; cursor: pointer;
 }
-.a-be-plus svg, .a-be-grip svg, .a-be-tool svg { width: 16px; height: 16px; }
+.a-be-plus svg { width: 18px; height: 18px; }
 .a-be-plus:hover, .a-be-plus[aria-expanded="true"] { color: var(--be-primary-ink); background: var(--be-primary); }
-.a-be-grip { cursor: grab; }
-.a-be-grip:active { cursor: grabbing; }
-.a-be-grip:hover { background: var(--be-sunk); color: var(--be-text); }
 
 .a-be-body { position: relative; min-width: 0; }
-.a-be-tools {
-  position: absolute; right: 0; top: -16px; z-index: 5;
-  display: flex; gap: 1px; padding: 2px;
-  background: var(--be-card); border: 1px solid var(--be-line); border-radius: 10px;
-  box-shadow: var(--be-shadow);
-  opacity: 0; pointer-events: none; transition: opacity 0.12s;
+
+/* Delete button for blocks that have no text line (image, html, markdown, table, ...) */
+.a-be-remove {
+  position: absolute; top: -10px; right: -10px; z-index: 5;
+  width: 30px; height: 30px; border-radius: 999px; padding: 0;
+  display: grid; place-items: center; cursor: pointer;
+  background: var(--be-card); color: var(--be-muted);
+  border: 1px solid var(--be-line-strong); box-shadow: var(--be-shadow);
 }
-.a-be-block:hover .a-be-tools,
-.a-be-block:focus-within .a-be-tools { opacity: 1; pointer-events: auto; }
-.a-be-tool:hover:not(:disabled) { color: var(--be-text); background: var(--be-sunk); }
-.a-be-tool:disabled { opacity: 0.35; cursor: default; }
-.a-be-tool.danger:hover { color: var(--be-danger); background: color-mix(in srgb, var(--be-danger) 12%, transparent); }
-@media (hover: none) { .a-be-tools { opacity: 1; pointer-events: auto; } }
+.a-be-remove svg { width: 16px; height: 16px; }
+.a-be-remove:hover, .a-be-remove:focus-visible {
+  color: #fff; background: var(--be-danger); border-color: var(--be-danger);
+}
+.a-be-block[data-type="divider"] .a-be-remove { top: 50%; transform: translateY(-50%); right: 0; }
 
 /* ---------- Writing typography & Rich Text ---------- */
 .a-be-text {
@@ -420,7 +421,7 @@
 
 /* Add block + word count */
 .a-be-add {
-  margin: 10px 0 0 60px;
+  margin: 10px 0 0 40px;
   display: inline-flex; align-items: center; gap: 6px; align-self: flex-start;
   border: 1px dashed var(--be-line-strong); background: transparent; color: var(--be-muted);
   font: 600 0.82rem var(--be-sans); padding: 7px 12px; border-radius: 10px; cursor: pointer;
@@ -622,9 +623,10 @@
   .a-be-pick.is-cover { margin: 0; }
   .a-be-canvas { margin-left: 0; }
   .a-be-block { grid-template-columns: 30px minmax(0, 1fr); }
-  .a-be-grip { display: none; }
-  .a-be-gutter { padding-right: 2px; }
+  .a-be-gutter { padding-left: 0; }
+  .a-be-plus { width: 26px; height: 26px; }
   .a-be-add { margin-left: 30px; }
+  .a-be-remove { top: -12px; right: -4px; }
   .a-be-text { font-size: 1.08rem; }
   .a-editor .a-editorbar { position: static; }
 }
