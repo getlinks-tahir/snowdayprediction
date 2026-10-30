@@ -577,7 +577,6 @@ export default function BlockCanvas({ blocks, onChange, theme: themeProp }: { bl
   const dragFrom = useRef<number | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const nonce = useRef(0);
-  const addRef = useRef<HTMLButtonElement>(null);
 
   const focusOn = (id: string | null) => setFocus({ id, n: ++nonce.current });
 
@@ -766,9 +765,6 @@ export default function BlockCanvas({ blocks, onChange, theme: themeProp }: { bl
             </div>
           </div>
         ))}
-        <button ref={addRef} type="button" className="a-be-add" onClick={(e) => openMenu(blocks.length - 1, e.currentTarget)}>
-          <Icon name="plus" /> Add a block
-        </button>
       </div>
 
       <div className="a-be-words" aria-live="polite">
