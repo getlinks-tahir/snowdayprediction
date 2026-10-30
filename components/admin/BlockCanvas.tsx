@@ -153,6 +153,11 @@ const MENU: { label: string; items: MenuItem[] }[] = [
 
 const FLAT = MENU.flatMap((group) => group.items);
 
+/** Blocks without a plain text line cannot be removed with Backspace, so they get a delete button. */
+const REMOVABLE = new Set<ContentBlock["type"]>([
+  "image", "gallery", "video", "audio", "html", "markdown", "table", "button", "callout", "code", "divider",
+]);
+
 type MenuState = { index: number; blockId: string; top: number; left: number; active: number; query: string };
 type Focus = { id: string | null; n: number };
 
@@ -170,6 +175,151 @@ function shortcut(text: string): { type: ContentBlock["type"]; level?: HeadingLe
   if (text === "---") return { type: "divider" };
   if (text === "```") return { type: "code" };
   return null;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Smart paste: detects bullet and numbered lists                     */
+/* ------------------------------------------------------------------ */
+type PastePiece =
+  | { kind: "p"; text: string }
+  | { kind: "ul" | "ol"; items: string[] };
+
+// "•  Item", "·\tItem", "- Item", "* Item", Word's private-use bullets, "o\tItem" (Word sub-bullet)
+const BULLET_RE = /^\s*(?:[•·●▪■◦‣⁃○\uF0B7\uF0A7\uF076]\s*|[*\-–—]\s+|o\t\s*)(\S.*)$/;
+// "1. Item", "2) Item", "(3) Item", "4.\tItem" (up to 3 digits, so years and decimals are not lists)
+const NUM_RE = /^\s*\(?\d{1,3}[.)]\s+(\S.*)$/;
+
+function listKind(line: string): "ul" | "ol" | null {
+  if (BULLET_RE.test(line)) return "ul";
+  if (NUM_RE.test(line)) return "ol";
+  return null;
+}
+
+function plainToPieces(text: string): PastePiece[] {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const pieces: PastePiece[] = [];
+  let para: string[] = [];
+  let list: { kind: "ul" | "ol"; items: string[]; raws: string[] } | null = null;
+
+  const flushPara = () => {
+    const t = para.join("\n").trim();
+    if (t) pieces.push({ kind: "p", text: t });
+    para = [];
+  };
+  const flushList = () => {
+    if (!list) return;
+    if (list.items.length >= 2) pieces.push({ kind: list.kind, items: list.items });
+    else pieces.push({ kind: "p", text: list.raws.join("\n").trim() }); // a lone "- item" stays as typed
+    list = null;
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) {
+      if (list) {
+        // a blank line only ends the list if the next line is not another item of the same kind
+        let j = i + 1;
+        while (j < lines.length && !lines[j].trim()) j++;
+        if (!(j < lines.length && listKind(lines[j]) === list.kind)) flushList();
+      } else {
+        flushPara();
+      }
+      continue;
+    }
+    const kind = listKind(line);
+    if (kind) {
+      if (list && list.kind !== kind) flushList();
+      if (!list) {
+        flushPara();
+        list = { kind, items: [], raws: [] };
+      }
+      const m = (kind === "ul" ? BULLET_RE : NUM_RE).exec(line);
+      list.items.push((m?.[1] ?? line).trim());
+      list.raws.push(line.trim());
+    } else {
+      if (list) flushList();
+      para.push(line.trim());
+    }
+  }
+  flushList();
+  flushPara();
+  return pieces;
+}
+
+const SKIP_TAGS = new Set(["STYLE", "SCRIPT", "META", "TITLE", "HEAD", "LINK", "NOSCRIPT"]);
+const BLOCK_TAGS = /^(P|DIV|H[1-6]|BLOCKQUOTE|PRE|SECTION|ARTICLE|ASIDE|HEADER|FOOTER|FIGURE|MAIN|NAV|TABLE|TR|DL|DT|DD|ADDRESS)$/;
+
+function cleanText(s: string): string {
+  return s.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function listItems(list: Element): string[] {
+  const items: string[] = [];
+  Array.from(list.children).forEach((li) => {
+    if (li.tagName !== "LI") return;
+    const clone = li.cloneNode(true) as Element;
+    clone.querySelectorAll("ul,ol").forEach((n) => n.remove());
+    const t = cleanText(clone.textContent ?? "");
+    if (t) items.push(t);
+    // nested lists are flattened into the same list, in order
+    Array.from(li.children).forEach((c) => {
+      if (c.tagName === "UL" || c.tagName === "OL") items.push(...listItems(c));
+    });
+  });
+  return items;
+}
+
+function walk(parent: Node, out: PastePiece[]) {
+  let buf = "";
+  const flush = () => {
+    const t = cleanText(buf);
+    if (t) out.push({ kind: "p", text: t });
+    buf = "";
+  };
+  parent.childNodes.forEach((node) => {
+    if (node.nodeType === 3) {
+      buf += node.textContent ?? "";
+      return;
+    }
+    if (node.nodeType !== 1) return;
+    const el = node as Element;
+    const tag = el.tagName;
+    if (SKIP_TAGS.has(tag)) return;
+    if (tag === "BR") {
+      flush();
+      return;
+    }
+    if (tag === "UL" || tag === "OL") {
+      flush();
+      const items = listItems(el);
+      if (items.length) out.push({ kind: tag === "OL" ? "ol" : "ul", items });
+      return;
+    }
+    // block elements, and inline wrappers that hold blocks (Google Docs wraps everything in a <b>)
+    if (BLOCK_TAGS.test(tag) || el.querySelector("ul,ol,p,div,h1,h2,h3,h4,h5,h6")) {
+      flush();
+      walk(el, out);
+      return;
+    }
+    buf += el.textContent ?? "";
+  });
+  flush();
+}
+
+/** Turns clipboard content into paragraphs and lists. Real <ul>/<ol> are used when present, otherwise the text is scanned for bullets and numbers. */
+function parsePaste(html: string, text: string): PastePiece[] {
+  if (html && /<(ul|ol)[\s>]/i.test(html)) {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const out: PastePiece[] = [];
+    walk(doc.body, out);
+    const pieces = out.map((p): PastePiece => (p.kind !== "p" && p.items.length < 2 ? { kind: "p", text: p.items.join(" ") } : p));
+    if (pieces.length) return pieces;
+  }
+  return plainToPieces(text);
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 /* ------------------------------------------------------------------ */
@@ -199,7 +349,7 @@ function Editable({
   focus: Focus;
   blockId: string;
   onKeyDown?: (e: ReactKey<HTMLDivElement>) => void;
-  onPasteBlocks?: (chunks: string[]) => void;
+  onPasteBlocks?: (pieces: PastePiece[]) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -224,10 +374,18 @@ function Editable({
   function onPaste(e: ReactPaste<HTMLDivElement>) {
     e.preventDefault();
     const text = e.clipboardData.getData("text/plain").replace(/\r\n/g, "\n");
-    const chunks = text.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
-    if (onPasteBlocks && chunks.length > 1 && readHtml(e.currentTarget).trim() === "") {
-      onPasteBlocks(chunks);
-      return;
+    const html = e.clipboardData.getData("text/html");
+
+    if (onPasteBlocks) {
+      const pieces = parsePaste(html, text);
+      const empty = stripHtml(readHtml(e.currentTarget)) === "";
+      const hasList = pieces.some((p) => p.kind !== "p");
+      // Lists always become real lists. Plain paragraphs only split into blocks when pasted into an empty block,
+      // so a phrase pasted into the middle of a sentence still stays inline.
+      if (pieces.length > 0 && (hasList || (pieces.length > 1 && empty))) {
+        onPasteBlocks(pieces);
+        return;
+      }
     }
     document.execCommand("insertText", false, text);
   }
@@ -573,8 +731,6 @@ export default function BlockCanvas({ blocks, onChange, theme: themeProp }: { bl
   const theme = themeProp ?? detected;
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [focus, setFocus] = useState<Focus>({ id: null, n: 0 });
-  const [over, setOver] = useState<number | null>(null);
-  const dragFrom = useRef<number | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const nonce = useRef(0);
 
@@ -675,21 +831,26 @@ export default function BlockCanvas({ blocks, onChange, theme: themeProp }: { bl
     focusOn(para.id);
   }
 
-  function pasteBlocks(index: number, chunks: string[]) {
-    const created = chunks.map((text) => ({ ...createBlock("paragraph"), text }) as EditorBlock);
-    const next = blocks.slice();
-    next.splice(index, 1, ...created);
-    onChange(next);
-    focusOn(created[created.length - 1].id);
-  }
+  /** Smart paste: paragraphs become paragraph blocks, bullets and numbers become real list blocks, in order. */
+  function pasteBlocks(index: number, pieces: PastePiece[]) {
+    const created = pieces.map((piece): EditorBlock => {
+      if (piece.kind === "p") {
+        return { ...createBlock("paragraph"), text: escapeHtml(piece.text).replace(/\n/g, "<br>") } as EditorBlock;
+      }
+      return { ...createBlock(piece.kind === "ul" ? "bulletList" : "numberedList"), items: piece.items.map(escapeHtml) } as EditorBlock;
+    });
+    if (!created.length) return;
 
-  function move(index: number, dir: -1 | 1) {
-    const j = index + dir;
-    if (j < 0 || j >= blocks.length) return;
+    const current = blocks[index];
+    const currentIsEmpty = !!current && current.type === "paragraph" && stripHtml(current.text) === "";
     const next = blocks.slice();
-    const [item] = next.splice(index, 1);
-    next.splice(j, 0, item);
+    // an empty paragraph is replaced by the pasted content, otherwise the content goes right after the current block
+    if (currentIsEmpty) next.splice(index, 1, ...created);
+    else next.splice(index + 1, 0, ...created);
     onChange(next);
+
+    const last = created[created.length - 1];
+    focusOn(last.type === "bulletList" || last.type === "numberedList" ? `${last.id}-${last.items.length - 1}` : last.id);
   }
 
   function openMenu(index: number, anchor: HTMLElement) {
@@ -702,17 +863,6 @@ export default function BlockCanvas({ blocks, onChange, theme: themeProp }: { bl
     setMenu({ index, blockId: blocks[index]?.id ?? "", top, left, active: 0, query: "" });
   }
 
-  function onDrop(index: number) {
-    const from = dragFrom.current;
-    dragFrom.current = null;
-    setOver(null);
-    if (from == null || from === index) return;
-    const next = blocks.slice();
-    const [item] = next.splice(from, 1);
-    next.splice(index, 0, item);
-    onChange(next);
-  }
-
   const words = countWords(blocks);
   const minutes = Math.max(1, Math.ceil(words / 200));
 
@@ -720,34 +870,18 @@ export default function BlockCanvas({ blocks, onChange, theme: themeProp }: { bl
     <div className="a-be" data-be-theme={theme}>
       <div className="a-be-canvas">
         {blocks.map((block, index) => (
-          <div
-            key={block.id}
-            data-type={block.type}
-            className={`a-be-block ${over === index ? "is-over" : ""}`}
-            onDragOver={(e) => { if (dragFrom.current !== null) { e.preventDefault(); setOver(index); } }}
-            onDrop={(e) => { if (dragFrom.current !== null) { e.preventDefault(); onDrop(index); } }}
-          >
+          <div key={block.id} data-type={block.type} className="a-be-block">
             <div className="a-be-gutter">
               <button type="button" className="a-be-plus" aria-label="Insert a block" aria-expanded={menu?.index === index} onClick={(e) => openMenu(index, e.currentTarget)}>
                 <Icon name="plus" />
               </button>
-              <button
-                type="button"
-                className="a-be-grip"
-                aria-label="Drag to reorder"
-                draggable
-                onDragStart={() => { dragFrom.current = index; }}
-                onDragEnd={() => { dragFrom.current = null; setOver(null); }}
-              >
-                <Icon name="grip" />
-              </button>
             </div>
             <div className="a-be-body">
-              <div className="a-be-tools">
-                <button type="button" className="a-be-tool" aria-label="Move up" disabled={index === 0} onClick={() => move(index, -1)}><Icon name="up" /></button>
-                <button type="button" className="a-be-tool" aria-label="Move down" disabled={index === blocks.length - 1} onClick={() => move(index, 1)}><Icon name="down" /></button>
-                <button type="button" className="a-be-tool danger" aria-label="Delete block" onClick={() => remove(index)}><Icon name="trash" /></button>
-              </div>
+              {REMOVABLE.has(block.type) && (
+                <button type="button" className="a-be-remove" aria-label="Delete block" title="Delete block" onClick={() => remove(index)}>
+                  <Icon name="trash" />
+                </button>
+              )}
               <BlockBody
                 block={block}
                 theme={theme}
@@ -758,7 +892,7 @@ export default function BlockCanvas({ blocks, onChange, theme: themeProp }: { bl
                 onBackspaceEmpty={() => backspaceRemove(index)}
                 onSlash={(el) => openMenu(index, el)}
                 onConvert={(type, level) => convert(index, type, level)}
-                onPasteBlocks={(chunks) => pasteBlocks(index, chunks)}
+                onPasteBlocks={(pieces) => pasteBlocks(index, pieces)}
                 onExitList={() => exitList(index)}
                 focusOn={focusOn}
               />
@@ -835,7 +969,7 @@ function BlockBody({
   onBackspaceEmpty: () => void;
   onSlash: (anchor: HTMLElement) => void;
   onConvert: (type: ContentBlock["type"], level?: HeadingLevel) => void;
-  onPasteBlocks: (chunks: string[]) => void;
+  onPasteBlocks: (pieces: PastePiece[]) => void;
   onExitList: () => void;
   focusOn: (id: string | null) => void;
 }) {
