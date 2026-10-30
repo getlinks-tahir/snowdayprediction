@@ -352,7 +352,7 @@
 .a-be-tool.danger:hover { color: var(--be-danger); background: color-mix(in srgb, var(--be-danger) 12%, transparent); }
 @media (hover: none) { .a-be-tools { opacity: 1; pointer-events: auto; } }
 
-/* ---------- Writing typography ---------- */
+/* ---------- Writing typography & Rich Text ---------- */
 .a-be-text {
   min-height: 1.75em;
   outline: none;
@@ -370,6 +370,29 @@
   color: var(--be-faint);
   pointer-events: none;
 }
+
+/* Rich Text Inline Elements */
+.a-be-text b, .a-be-text strong { font-weight: 700; }
+.a-be-text i, .a-be-text em { font-style: italic; }
+.a-be-text u { text-decoration: underline; text-underline-offset: 3px; }
+.a-be-text s, .a-be-text strike { text-decoration: line-through; color: var(--be-muted); }
+.a-be-text code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--be-sunk);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  color: var(--be-danger);
+  border: 1px solid var(--be-line);
+}
+.a-be-text a {
+  color: var(--be-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.a-be-text a:hover { color: color-mix(in srgb, var(--be-primary) 80%, var(--be-text)); }
+
 .a-be-h1, .a-be-h2, .a-be-h3 { font-weight: 700; color: var(--be-text); }
 .a-be-h1 { font-size: clamp(1.8rem, 3.4vw, 2.2rem); line-height: 1.2; letter-spacing: -0.025em; }
 .a-be-h2 { font-size: 1.55rem; line-height: 1.25; letter-spacing: -0.02em; }
@@ -539,6 +562,54 @@
 .a-be-menu-item.is-active { background: var(--be-soft); }
 .a-be-menu-item.is-active svg { color: var(--be-primary); }
 .a-be-menu-item small { margin-left: auto; color: var(--be-faint); font: 500 0.74rem ui-monospace, Menlo, monospace; }
+
+/* ---------- Floating Toolbar (Bubble Menu) ---------- */
+.a-be-bubble {
+  position: fixed;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  background: var(--be-card);
+  border: 1px solid var(--be-line);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(16, 24, 40, 0.15);
+  transform: translateX(-50%);
+  transition: opacity 0.15s, transform 0.15s;
+  pointer-events: auto;
+  font-family: var(--be-sans);
+}
+.a-be-bubble.is-hidden { opacity: 0; pointer-events: none; transform: translateX(-50%) translateY(4px); }
+.a-be-bubble button {
+  width: 32px; height: 32px; border: 0; background: transparent; color: var(--be-text);
+  border-radius: 6px; display: grid; place-items: center; cursor: pointer; font-weight: 700;
+  font-family: var(--be-sans); font-size: 1rem;
+}
+.a-be-bubble button:hover { background: var(--be-sunk); color: var(--be-primary); }
+.a-be-bubble button.is-active { background: var(--be-soft); color: var(--be-primary); }
+.a-be-bubble .sep { width: 1px; height: 20px; background: var(--be-line); margin: 0 4px; }
+
+.a-be-bubble-link {
+  position: absolute; top: 100%; left: 50%; margin-top: 8px;
+  display: flex; gap: 6px; padding: 6px; background: var(--be-card); border: 1px solid var(--be-line);
+  border-radius: 10px; box-shadow: 0 10px 30px rgba(16, 24, 40, 0.15); z-index: 101; min-width: 280px;
+  transform: translateX(-50%);
+}
+.a-be-bubble-link input {
+  flex: 1; border: 1px solid var(--be-line-strong); background: var(--be-sunk); color: var(--be-text);
+  border-radius: 8px; padding: 8px 10px; font: 400 0.9rem var(--be-sans); outline: none;
+}
+.a-be-bubble-link input:focus { border-color: var(--be-primary); background: var(--be-card); }
+.a-be-bubble-link button {
+  padding: 0 12px; height: 36px; background: var(--be-primary); color: var(--be-primary-ink); border-radius: 8px; font: 600 0.85rem var(--be-sans);
+}
+.a-be-bubble-link button.is-danger { 
+  background: transparent; color: var(--be-danger); border: 1px solid var(--be-line-strong); 
+}
+.a-be-bubble-link button.is-danger:hover { 
+  background: color-mix(in srgb, var(--be-danger) 10%, transparent); 
+}
 
 /* ---------- Tablet / mobile ---------- */
 @media (max-width: 1100px) {
