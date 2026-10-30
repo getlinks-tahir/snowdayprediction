@@ -1,3 +1,4 @@
+import HtmlBlockView from "@/components/HtmlBlockView";
 import {
   audioEmbed,
   htmlDocument,
@@ -89,15 +90,7 @@ export default function BlockView({ block, theme = "auto" }: { block: ContentBlo
       );
     }
     case "html":
-      return (
-        <iframe
-          title="HTML block"
-          sandbox=""
-          referrerPolicy="no-referrer"
-          srcDoc={htmlDocument(block.html, theme)}
-          style={{ width: "100%", minHeight: 180, height: Math.min(720, Math.max(180, block.html.length / 2)), border: 0, display: "block", margin: "0 0 1rem" }}
-        />
-      );
+  return <HtmlBlockView html={block.html} />;
     case "markdown":
       return (
         <iframe
