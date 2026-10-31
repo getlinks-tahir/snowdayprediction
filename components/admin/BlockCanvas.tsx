@@ -2,11 +2,13 @@
 
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ClipboardEvent as ReactPaste,
   type KeyboardEvent as ReactKey,
   type FormEvent,
+  type ReactNode,
 } from "react";
 import {
   audioEmbed,
@@ -24,7 +26,7 @@ import { uploadBlogImage } from "@/lib/admin/upload-actions";
 import "./block-editor.css";
 
 /* ------------------------------------------------------------------ */
-/*  Standard image size                                                */
+/*  Standard image size                                               */
 /* ------------------------------------------------------------------ */
 export const IMAGE_WIDTH = 1600;
 export const IMAGE_HEIGHT = 900;
@@ -65,20 +67,29 @@ export async function standardizeImage(file: File): Promise<File> {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Icons                                                              */
+/*  Icons                                                             */
 /* ------------------------------------------------------------------ */
 type IconName =
-  | "plus" | "grip" | "up" | "down" | "trash" | "paragraph" | "h1" | "h2" | "h3"
+  | "plus" | "up" | "down" | "trash" | "paragraph" | "h1" | "h2" | "h3"
   | "list" | "olist" | "quote" | "minus" | "image" | "gallery" | "video" | "audio"
   | "html" | "markdown" | "table" | "button" | "callout" | "code" | "imagePlus"
-  | "upload" | "replace" | "link" | "close" | "search";
+  | "upload" | "replace" | "link" | "close" | "undo" | "redo" | "clearFormat";
 
 function Icon({ name }: { name: IconName }) {
-  const common = { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
+  const common = {
+    width: 18,
+    height: 18,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.8,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
   const dot = (cx: number, cy: number) => <circle key={`${cx}-${cy}`} cx={cx} cy={cy} r="1" fill="currentColor" stroke="none" />;
   switch (name) {
     case "plus": return <svg {...common}><path d="M12 5v14M5 12h14" /></svg>;
-    case "grip": return <svg {...common}>{[7, 12, 17].flatMap((y) => [dot(9, y), dot(15, y)])}</svg>;
     case "up": return <svg {...common}><path d="M6 14l6-6 6 6" /></svg>;
     case "down": return <svg {...common}><path d="M6 10l6 6 6-6" /></svg>;
     case "trash": return <svg {...common}><path d="M4 7h16M9 7V5h6v2M8 7l1 12h6l1-12" /></svg>;
@@ -105,135 +116,690 @@ function Icon({ name }: { name: IconName }) {
     case "replace": return <svg {...common}><path d="M4 8h13l-3-3M20 16H7l3 3" /></svg>;
     case "link": return <svg {...common}><path d="M10 14a4 4 0 0 0 5.6 0l3-3a4 4 0 0 0-5.6-5.6l-1 1M14 10a4 4 0 0 0-5.6 0l-3 3a4 4 0 0 0 5.6 5.6l1-1" /></svg>;
     case "close": return <svg {...common}><path d="M6 6l12 12M18 6L6 18" /></svg>;
-    case "search": return <svg {...common}><circle cx="11" cy="11" r="6" /><path d="M20 20l-4-4" /></svg>;
+    case "undo": return <svg {...common}><path d="M9 14L4 9l5-5" /><path d="M4 9h10a6 6 0 0 1 0 12h-3" /></svg>;
+    case "redo": return <svg {...common}><path d="M15 14l5-5-5-5" /><path d="M20 9H10a6 6 0 0 0 0 12h3" /></svg>;
+    case "clearFormat": return <svg {...common}><path d="M6 4h12M12 4l-3 14M4 20l16-16" /></svg>;
     default: return null;
   }
 }
 
 /* ------------------------------------------------------------------ */
-/*  Block menu                                                         */
+/*  Clean Inline HTML Sanitizer & Smart Clipboard Parser              */
 /* ------------------------------------------------------------------ */
-type MenuItem = { label: string; type: ContentBlock["type"]; level?: HeadingLevel; icon: IconName; hint?: string };
 
-const MENU: { label: string; items: MenuItem[] }[] = [
-  {
-    label: "Text",
-    items: [
-      { label: "Paragraph", type: "paragraph", icon: "paragraph" },
-      { label: "Heading 1", type: "heading", level: 1, icon: "h1", hint: "#" },
-      { label: "Heading 2", type: "heading", level: 2, icon: "h2", hint: "##" },
-      { label: "Heading 3", type: "heading", level: 3, icon: "h3", hint: "###" },
-      { label: "Bulleted list", type: "bulletList", icon: "list", hint: "-" },
-      { label: "Numbered list", type: "numberedList", icon: "olist", hint: "1." },
-      { label: "Blockquote", type: "quote", icon: "quote", hint: ">" },
-      { label: "Divider", type: "divider", icon: "minus", hint: "---" },
-    ],
-  },
-  {
-    label: "Media",
-    items: [
-      { label: "Image", type: "image", icon: "image" },
-      { label: "Gallery", type: "gallery", icon: "gallery" },
-      { label: "Video", type: "video", icon: "video" },
-      { label: "Audio", type: "audio", icon: "audio" },
-    ],
-  },
-  {
-    label: "Advanced",
-    items: [
-      { label: "HTML", type: "html", icon: "html" },
-      { label: "Markdown", type: "markdown", icon: "markdown" },
-      { label: "Table", type: "table", icon: "table" },
-      { label: "Button", type: "button", icon: "button" },
-      { label: "Callout", type: "callout", icon: "callout" },
-      { label: "Code", type: "code", icon: "code", hint: "```" },
-    ],
-  },
-];
-
-const FLAT = MENU.flatMap((group) => group.items);
-
-type MenuState = { index: number; blockId: string; top: number; left: number; active: number; query: string };
-type Focus = { id: string | null; n: number };
-
-function focusKey(block: EditorBlock): string {
-  return block.type === "bulletList" || block.type === "numberedList" ? `${block.id}-0` : block.id;
+function escapeHtml(raw: string): string {
+  return raw
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
-/** "# " -> heading, "- " -> list, etc. Only fires when the prefix is all that was typed. */
-function shortcut(text: string): { type: ContentBlock["type"]; level?: HeadingLevel } | null {
-  const h = /^(#{1,3})\s$/.exec(text);
-  if (h) return { type: "heading", level: h[1].length as HeadingLevel };
-  if (/^[-*•]\s$/.test(text)) return { type: "bulletList" };
-  if (/^1[.)]\s$/.test(text)) return { type: "numberedList" };
-  if (/^>\s$/.test(text)) return { type: "quote" };
-  if (text === "---") return { type: "divider" };
-  if (text === "```") return { type: "code" };
-  return null;
-}
+export function normalizeHref(rawHref: string): string {
+  let href = rawHref.trim();
+  if (!href) return "";
+  try {
+    const parsed = new URL(href, "https://example.com");
+    if ((parsed.hostname === "www.google.com" || parsed.hostname === "google.com") && parsed.pathname === "/url") {
+      const q = parsed.searchParams.get("q") || parsed.searchParams.get("url");
+      if (q) href = q.trim();
+    }
+  } catch { /* ignore */ }
 
-/* ------------------------------------------------------------------ */
-/*  Editable text (Now supports Rich Text HTML)                        */
-/* ------------------------------------------------------------------ */
-function readHtml(el: HTMLElement): string {
-  let html = el.innerHTML;
-  // Clean up empty states that break :empty CSS pseudo-class
-  if (html === '<br>' || html === '<div><br></div>' || html === '<p><br></p>' || html === '&nbsp;' || html === ' ') {
-    el.innerHTML = '';
-    return '';
+  if (/^(javascript|vbscript|data):/i.test(href)) return "";
+  if (!/^(https?:\/\/|mailto:|tel:|\/|#)/i.test(href) && /^[a-z0-9.-]+\.[a-z]{2,}(\/.*)?$/i.test(href)) {
+    href = `https://${href}`;
   }
-  return html.replace(/\u00a0/g, " ").replace(/\n$/, "");
+  return href;
+}
+
+/**
+ * Sanitizes inline rich text so block-level tags (<p>, <div>, <h1>-<h6>, <span>)
+ * never leak into block.text as visible literal HTML tags, while keeping
+ * clean <b>, <i>, <u>, <s>, <code>, and <a href="..."> anchor tags.
+ */
+export function sanitizeInlineHtml(dirtyHtml: string): string {
+  if (!dirtyHtml || !dirtyHtml.trim()) return "";
+  if (typeof DOMParser === "undefined") return dirtyHtml;
+
+  const doc = new DOMParser().parseFromString(`<div>${dirtyHtml}</div>`, "text/html");
+  const root = doc.body.firstElementChild ?? doc.body;
+
+  function serializeNode(node: Node): string {
+    if (node.nodeType === Node.TEXT_NODE) {
+      return escapeHtml((node.textContent ?? "").replace(/\u00a0/g, " "));
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return "";
+
+    const el = node as HTMLElement;
+    const tag = el.tagName.toLowerCase();
+
+    if (tag === "br") return "";
+    if (tag === "script" || tag === "style" || tag === "meta" || tag === "link") return "";
+
+    const styleAttr = (el.getAttribute("style") ?? "").toLowerCase();
+    const isNormalWeightB =
+      (tag === "b" || tag === "strong") && /font-weight\s*:\s*(normal|400)\b/.test(styleAttr);
+
+    const childrenHtml = Array.from(el.childNodes).map(serializeNode).join("");
+    if (!childrenHtml) return "";
+
+    if (tag === "span" || tag === "font" || isNormalWeightB) {
+      let out = childrenHtml;
+      if (!isNormalWeightB && /font-weight\s*:\s*(bold|[6-9]00)\b/.test(styleAttr)) {
+        out = `<b>${out}</b>`;
+      }
+      if (/font-style\s*:\s*italic\b/.test(styleAttr)) {
+        out = `<i>${out}</i>`;
+      }
+      if (/text-decoration(-line)?\s*:[^;]*underline\b/.test(styleAttr) && el.closest("a") === null) {
+        out = `<u>${out}</u>`;
+      }
+      if (/text-decoration(-line)?\s*:[^;]*line-through\b/.test(styleAttr)) {
+        out = `<s>${out}</s>`;
+      }
+      return out;
+    }
+
+    if (tag === "b" || tag === "strong") return `<b>${childrenHtml}</b>`;
+    if (tag === "i" || tag === "em") return `<i>${childrenHtml}</i>`;
+    if (tag === "u") return el.closest("a") ? childrenHtml : `<u>${childrenHtml}</u>`;
+    if (tag === "s" || tag === "strike" || tag === "del") return `<s>${childrenHtml}</s>`;
+    if (tag === "code") return `<code>${escapeHtml(el.textContent ?? "")}</code>`;
+
+    if (tag === "a") {
+      const href = normalizeHref(el.getAttribute("href") ?? "");
+      const cleanLabel = childrenHtml.replace(/<\/?u>/gi, "").trim() || escapeHtml(el.textContent?.trim() ?? "");
+      if (!href) return cleanLabel;
+      return `<a href="${escapeHtml(href)}">${cleanLabel}</a>`;
+    }
+
+    return childrenHtml;
+  }
+
+  return Array.from(root.childNodes)
+    .map(serializeNode)
+    .join("")
+    .trim();
 }
 
 function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim();
+  if (!html) return "";
+  return html
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/\u00a0/g, " ")
+    .trim();
 }
 
-function Editable({
-  value, onChange, placeholder, className, focus, blockId, onKeyDown, onPasteBlocks,
+function inlineMarkdownToHtml(text: string): string {
+  let out = escapeHtml(text.trim());
+  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, url) => {
+    const href = normalizeHref(url);
+    return href ? `<a href="${escapeHtml(href)}">${label}</a>` : label;
+  });
+  out = out.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  out = out.replace(/(^|[\s(])\*([^*]+)\*(?=[\s).,!?:;]|$)/g, "$1<i>$2</i>");
+  out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Continuous Rich-Text Flow <-> EditorBlock[] Conversion            */
+/* ------------------------------------------------------------------ */
+
+type FlowBlockType =
+  | "paragraph"
+  | "heading"
+  | "bulletList"
+  | "numberedList"
+  | "quote"
+  | "callout"
+  | "divider";
+
+const FLOW_TYPES = new Set<ContentBlock["type"]>([
+  "paragraph",
+  "heading",
+  "bulletList",
+  "numberedList",
+  "quote",
+  "callout",
+  "divider",
+]);
+
+export function isFlowBlock(b: EditorBlock): boolean {
+  return FLOW_TYPES.has(b.type);
+}
+
+/**
+ * Converts an array of flow EditorBlocks into clean HTML for the single continuous
+ * Blogger / WordPress / Google Docs writing surface.
+ */
+function flowBlocksToHtml(blocks: EditorBlock[]): string {
+  if (!blocks.length) return "<p><br></p>";
+  const parts: string[] = [];
+
+  for (const b of blocks) {
+    switch (b.type) {
+      case "paragraph": {
+        const cleaned = sanitizeInlineHtml(b.text);
+        parts.push(`<p data-bid="${b.id}">${cleaned || "<br>"}</p>`);
+        break;
+      }
+      case "heading": {
+        const cleaned = sanitizeInlineHtml(b.text);
+        const tag = b.level === 1 ? "h1" : b.level === 3 ? "h3" : "h2";
+        parts.push(`<${tag} data-bid="${b.id}">${cleaned || "<br>"}</${tag}>`);
+        break;
+      }
+      case "quote": {
+        const cleaned = sanitizeInlineHtml(b.text);
+        parts.push(`<blockquote data-bid="${b.id}">${cleaned || "<br>"}</blockquote>`);
+        break;
+      }
+      case "callout": {
+        const cleaned = sanitizeInlineHtml(b.text);
+        parts.push(`<div data-callout="true" data-bid="${b.id}">${cleaned || "<br>"}</div>`);
+        break;
+      }
+      case "bulletList": {
+        const items = b.items.length ? b.items : [""];
+        const lis = items.map((it) => `<li>${sanitizeInlineHtml(it) || "<br>"}</li>`).join("");
+        parts.push(`<ul data-bid="${b.id}">${lis}</ul>`);
+        break;
+      }
+      case "numberedList": {
+        const items = b.items.length ? b.items : [""];
+        const lis = items.map((it) => `<li>${sanitizeInlineHtml(it) || "<br>"}</li>`).join("");
+        parts.push(`<ol data-bid="${b.id}">${lis}</ol>`);
+        break;
+      }
+      case "divider": {
+        parts.push(`<hr data-bid="${b.id}">`);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  return parts.join("") || "<p><br></p>";
+}
+
+/**
+ * Parses the live DOM inside a continuous RichFlowSurface back into structured EditorBlock[]
+ * so PostEditor and blocksToSectionInputs work seamlessly.
+ */
+function parseFlowDomToBlocks(root: HTMLElement): EditorBlock[] {
+  const out: EditorBlock[] = [];
+  const usedIds = new Set<string>();
+
+  const claimId = (el: HTMLElement | null, type: FlowBlockType, level?: HeadingLevel): EditorBlock => {
+    const attrId = el?.getAttribute("data-bid");
+    const fresh = createBlock(type, level) as EditorBlock;
+    if (attrId && !usedIds.has(attrId)) {
+      usedIds.add(attrId);
+      return { ...fresh, id: attrId };
+    }
+    usedIds.add(fresh.id);
+    if (el) el.setAttribute("data-bid", fresh.id);
+    return fresh;
+  };
+
+  const extractListItems = (listEl: HTMLElement): string[] => {
+    const items: string[] = [];
+    for (const child of Array.from(listEl.children)) {
+      const tag = child.tagName.toLowerCase();
+      if (tag === "li") {
+        const clone = child.cloneNode(true) as HTMLElement;
+        clone.querySelectorAll("ul, ol").forEach((n) => n.remove());
+        const itemHtml = sanitizeInlineHtml(clone.innerHTML);
+        items.push(itemHtml);
+        for (const nested of Array.from(child.children)) {
+          const nt = nested.tagName.toLowerCase();
+          if (nt === "ul" || nt === "ol") {
+            items.push(...extractListItems(nested as HTMLElement));
+          }
+        }
+      } else if (tag === "ul" || tag === "ol") {
+        items.push(...extractListItems(child as HTMLElement));
+      }
+    }
+    return items.length ? items : [""];
+  };
+
+  const walkChildren = (container: ParentNode) => {
+    let inlineAcc = "";
+    const flushInline = () => {
+      const cleaned = sanitizeInlineHtml(inlineAcc);
+      if (stripHtml(cleaned)) {
+        const blk = claimId(null, "paragraph");
+        out.push({ ...blk, type: "paragraph", text: cleaned } as EditorBlock);
+      }
+      inlineAcc = "";
+    };
+
+    for (const node of Array.from(container.childNodes)) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const txt = node.textContent ?? "";
+        if (txt.trim()) inlineAcc += escapeHtml(txt);
+        else if (inlineAcc) inlineAcc += " ";
+        continue;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+
+      const el = node as HTMLElement;
+      const tag = el.tagName.toLowerCase();
+
+      if (tag === "br") {
+        flushInline();
+        continue;
+      }
+
+      if (/^h[1-6]$/.test(tag)) {
+        flushInline();
+        const num = Number.parseInt(tag[1], 10);
+        const level: HeadingLevel = num === 1 ? 1 : num === 2 ? 2 : 3;
+        const blk = claimId(el, "heading", level);
+        out.push({
+          ...blk,
+          type: "heading",
+          level,
+          text: sanitizeInlineHtml(el.innerHTML),
+        } as EditorBlock);
+        continue;
+      }
+
+      if (tag === "ul" || tag === "ol") {
+        flushInline();
+        const listType = tag === "ol" ? "numberedList" : "bulletList";
+        const blk = claimId(el, listType);
+        out.push({
+          ...blk,
+          type: listType,
+          items: extractListItems(el),
+        } as EditorBlock);
+        continue;
+      }
+
+      if (tag === "blockquote") {
+        flushInline();
+        const blk = claimId(el, "quote");
+        out.push({
+          ...blk,
+          type: "quote",
+          text: sanitizeInlineHtml(el.innerHTML),
+        } as EditorBlock);
+        continue;
+      }
+
+      if (el.getAttribute("data-callout") === "true") {
+        flushInline();
+        const blk = claimId(el, "callout");
+        out.push({
+          ...blk,
+          type: "callout",
+          text: sanitizeInlineHtml(el.innerHTML),
+        } as EditorBlock);
+        continue;
+      }
+
+      if (tag === "hr") {
+        flushInline();
+        const blk = claimId(el, "divider");
+        out.push({ ...blk, type: "divider" } as EditorBlock);
+        continue;
+      }
+
+      if (tag === "p" || tag === "div" || tag === "section" || tag === "article") {
+        flushInline();
+        const hasBlockChildren = Array.from(el.children).some((c) =>
+          /^(p|h[1-6]|ul|ol|blockquote|hr|div|section|article)$/i.test(c.tagName)
+        );
+        if (hasBlockChildren) {
+          walkChildren(el);
+        } else {
+          const blk = claimId(el, "paragraph");
+          out.push({
+            ...blk,
+            type: "paragraph",
+            text: sanitizeInlineHtml(el.innerHTML),
+          } as EditorBlock);
+        }
+        continue;
+      }
+
+      inlineAcc += el.outerHTML;
+    }
+
+    flushInline();
+  };
+
+  walkChildren(root);
+
+  // Drop trailing empty paragraphs if there are other blocks, but always keep at least 1 paragraph
+  if (out.length === 0) {
+    return [createBlock("paragraph")];
+  }
+  return out;
+}
+
+/**
+ * Smart Paste sanitizer for pasting 1,500+ word Google Docs / Word / Web articles
+ * directly into the continuous document surface.
+ */
+function cleanPastedContentToHtml(htmlData: string, plainData: string): string {
+  if (htmlData && htmlData.trim() && typeof DOMParser !== "undefined") {
+    const doc = new DOMParser().parseFromString(htmlData, "text/html");
+    doc.querySelectorAll("script, style, meta, link, title, head").forEach((n) => n.remove());
+
+    const outParts: string[] = [];
+
+    const serializeList = (listEl: HTMLElement, ordered: boolean): string => {
+      const items: string[] = [];
+      for (const child of Array.from(listEl.children)) {
+        const t = child.tagName.toLowerCase();
+        if (t === "li") {
+          const clone = child.cloneNode(true) as HTMLElement;
+          clone.querySelectorAll("ul, ol").forEach((n) => n.remove());
+          const mainText = sanitizeInlineHtml(clone.innerHTML);
+          if (stripHtml(mainText)) items.push(`<li>${mainText}</li>`);
+          for (const nested of Array.from(child.children)) {
+            const nt = nested.tagName.toLowerCase();
+            if (nt === "ul" || nt === "ol") {
+              const nestedItems = Array.from(nested.querySelectorAll("li"))
+                .map((li) => sanitizeInlineHtml(li.innerHTML))
+                .filter((x) => stripHtml(x));
+              nestedItems.forEach((ni) => items.push(`<li>${ni}</li>`));
+            }
+          }
+        }
+      }
+      if (!items.length) return "";
+      const tag = ordered ? "ol" : "ul";
+      return `<${tag}>${items.join("")}</${tag}>`;
+    };
+
+    const walk = (container: ParentNode) => {
+      let inlineBuf = "";
+      const flush = () => {
+        const cleaned = sanitizeInlineHtml(inlineBuf);
+        if (stripHtml(cleaned)) outParts.push(`<p>${cleaned}</p>`);
+        inlineBuf = "";
+      };
+
+      for (const node of Array.from(container.childNodes)) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          const txt = node.textContent ?? "";
+          if (txt.trim()) inlineBuf += escapeHtml(txt);
+          else if (inlineBuf) inlineBuf += " ";
+          continue;
+        }
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+
+        const el = node as HTMLElement;
+        const tag = el.tagName.toLowerCase();
+        const styleAttr = (el.getAttribute("style") ?? "").toLowerCase();
+
+        // Unwrap Google Docs <b style="font-weight:normal" id="docs-internal-guid-...">
+        if (
+          (tag === "b" || tag === "strong") &&
+          (el.id.startsWith("docs-internal-guid") || /font-weight\s*:\s*(normal|400)\b/.test(styleAttr))
+        ) {
+          flush();
+          walk(el);
+          continue;
+        }
+
+        if (tag === "div" || tag === "section" || tag === "article" || tag === "main") {
+          flush();
+          const hasBlocks = Array.from(el.children).some((c) =>
+            /^(p|h[1-6]|ul|ol|blockquote|hr|div|section|article|table|pre)$/i.test(c.tagName)
+          );
+          if (hasBlocks) walk(el);
+          else {
+            const cleaned = sanitizeInlineHtml(el.innerHTML);
+            if (stripHtml(cleaned)) outParts.push(`<p>${cleaned}</p>`);
+          }
+          continue;
+        }
+
+        if (/^h[1-6]$/.test(tag)) {
+          flush();
+          const num = Number.parseInt(tag[1], 10);
+          const hTag = num === 1 ? "h1" : num === 2 ? "h2" : "h3";
+          const cleaned = sanitizeInlineHtml(el.innerHTML);
+          if (stripHtml(cleaned)) outParts.push(`<${hTag}>${cleaned}</${hTag}>`);
+          continue;
+        }
+
+        if (tag === "p") {
+          flush();
+          const cleaned = sanitizeInlineHtml(el.innerHTML);
+          if (stripHtml(cleaned)) outParts.push(`<p>${cleaned}</p>`);
+          continue;
+        }
+
+        if (tag === "ul" || tag === "ol") {
+          flush();
+          const listHtml = serializeList(el, tag === "ol");
+          if (listHtml) outParts.push(listHtml);
+          continue;
+        }
+
+        if (tag === "blockquote") {
+          flush();
+          const cleaned = sanitizeInlineHtml(el.innerHTML);
+          if (stripHtml(cleaned)) outParts.push(`<blockquote>${cleaned}</blockquote>`);
+          continue;
+        }
+
+        if (tag === "hr") {
+          flush();
+          outParts.push("<hr>");
+          continue;
+        }
+
+        inlineBuf += el.outerHTML;
+      }
+
+      flush();
+    };
+
+    walk(doc.body);
+    if (outParts.length > 0) return outParts.join("");
+  }
+
+  // Fallback: Convert plain text / Markdown into clean semantic HTML paragraphs, headings, and lists
+  const normalized = (plainData ?? "").replace(/\r\n/g, "\n").trim();
+  if (!normalized) return "";
+
+  const lines = normalized.split("\n");
+  const outParts: string[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) { i++; continue; }
+
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+      outParts.push("<hr>");
+      i++;
+      continue;
+    }
+
+    const hMatch = /^(#{1,6})\s+(.+)$/.exec(trimmed);
+    if (hMatch) {
+      const num = hMatch[1].length;
+      const hTag = num === 1 ? "h1" : num === 2 ? "h2" : "h3";
+      outParts.push(`<${hTag}>${inlineMarkdownToHtml(hMatch[2])}</${hTag}>`);
+      i++;
+      continue;
+    }
+
+    if (/^([-*•])\s+(.+)$/.test(trimmed)) {
+      const lis: string[] = [];
+      while (i < lines.length) {
+        const m = /^([-*•])\s+(.+)$/.exec(lines[i].trim());
+        if (!m) break;
+        lis.push(`<li>${inlineMarkdownToHtml(m[2])}</li>`);
+        i++;
+      }
+      outParts.push(`<ul>${lis.join("")}</ul>`);
+      continue;
+    }
+
+    if (/^\d+[.)]\s+(.+)$/.test(trimmed)) {
+      const lis: string[] = [];
+      while (i < lines.length) {
+        const m = /^\d+[.)]\s+(.+)$/.exec(lines[i].trim());
+        if (!m) break;
+        lis.push(`<li>${inlineMarkdownToHtml(m[1])}</li>`);
+        i++;
+      }
+      outParts.push(`<ol>${lis.join("")}</ol>`);
+      continue;
+    }
+
+    if (/^>\s?(.*)$/.test(trimmed)) {
+      const qLines: string[] = [];
+      while (i < lines.length) {
+        const m = /^>\s?(.*)$/.exec(lines[i].trim());
+        if (!m) break;
+        qLines.push(inlineMarkdownToHtml(m[1]));
+        i++;
+      }
+      outParts.push(`<blockquote>${qLines.join(" ")}</blockquote>`);
+      continue;
+    }
+
+    const pLines: string[] = [];
+    while (i < lines.length) {
+      const cur = lines[i].trim();
+      if (
+        !cur ||
+        /^(-{3,}|\*{3,}|_{3,})$/.test(cur) ||
+        /^(#{1,6})\s+/.test(cur) ||
+        /^([-*•])\s+/.test(cur) ||
+        /^\d+[.)]\s+/.test(cur) ||
+        /^>\s?/.test(cur)
+      ) {
+        break;
+      }
+      pLines.push(inlineMarkdownToHtml(cur));
+      i++;
+    }
+    if (pLines.length) {
+      outParts.push(`<p>${pLines.join(" ")}</p>`);
+    }
+  }
+
+  return outParts.join("");
+}
+
+/* ------------------------------------------------------------------ */
+/*  Continuous RichFlowSurface Component                              */
+/* ------------------------------------------------------------------ */
+function RichFlowSurface({
+  blocks,
+  syncVersion,
+  isFirst,
+  isOnly,
+  onChangeBlocks,
+  onActiveFlowRef,
+  onSelectionStateChange,
 }: {
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-  className?: string;
-  focus: Focus;
-  blockId: string;
-  onKeyDown?: (e: ReactKey<HTMLDivElement>) => void;
-  onPasteBlocks?: (chunks: string[]) => void;
+  blocks: EditorBlock[];
+  syncVersion: number;
+  isFirst: boolean;
+  isOnly: boolean;
+  onChangeBlocks: (next: EditorBlock[]) => void;
+  onActiveFlowRef: (el: HTMLDivElement) => void;
+  onSelectionStateChange: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const mounted = useRef(false);
 
+  // Sync external state changes (initial load, Undo/Redo, or widget split) into DOM
   useEffect(() => {
     const el = ref.current;
-    if (!el || document.activeElement === el) return;
-    if (readHtml(el) !== value) el.innerHTML = value;
-  }, [value]);
+    if (!el) return;
+    const html = flowBlocksToHtml(blocks);
+    if (!mounted.current || el.innerHTML !== html) {
+      el.innerHTML = html;
+      mounted.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncVersion]);
 
-  useEffect(() => {
+  function emitChange() {
     const el = ref.current;
-    if (!el || focus.id !== blockId) return;
-    el.focus();
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    range.collapse(false);
-    const sel = window.getSelection();
-    sel?.removeAllRanges();
-    sel?.addRange(range);
-  }, [focus, blockId]);
+    if (!el) return;
+    const parsed = parseFlowDomToBlocks(el);
+    onChangeBlocks(parsed);
+    onSelectionStateChange();
+  }
 
   function onPaste(e: ReactPaste<HTMLDivElement>) {
     e.preventDefault();
-    const text = e.clipboardData.getData("text/plain").replace(/\r\n/g, "\n");
-    const chunks = text.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
-    if (onPasteBlocks && chunks.length > 1 && readHtml(e.currentTarget).trim() === "") {
-      onPasteBlocks(chunks);
-      return;
+    const htmlData = e.clipboardData.getData("text/html");
+    const plainData = e.clipboardData.getData("text/plain");
+
+    // Single-line plain paste inside an existing line -> insert inline
+    const cleanedHtml = cleanPastedContentToHtml(htmlData, plainData);
+    if (!cleanedHtml) return;
+
+    const temp = new DOMParser().parseFromString(cleanedHtml, "text/html");
+    if (temp.body.children.length === 1 && temp.body.firstElementChild?.tagName.toLowerCase() === "p") {
+      document.execCommand("insertHTML", false, temp.body.firstElementChild.innerHTML);
+    } else {
+      document.execCommand("insertHTML", false, cleanedHtml);
     }
-    document.execCommand("insertText", false, text);
+    emitChange();
   }
 
-  function onInput(e: React.FormEvent<HTMLDivElement>) {
-    onChange(readHtml(e.currentTarget));
+  function onKeyDown(e: ReactKey<HTMLDivElement>) {
+    const el = ref.current;
+    if (!el) return;
+
+    // Inline formatting shortcuts (Ctrl+B, Ctrl+I, Ctrl+U)
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey) {
+      const k = e.key.toLowerCase();
+      if (k === "b" || k === "i" || k === "u") {
+        e.preventDefault();
+        document.execCommand(k === "b" ? "bold" : k === "i" ? "italic" : "underline");
+        emitChange();
+        return;
+      }
+    }
+
+    // When pressing Enter at the end of a Heading (H1/H2/H3) or Blockquote, ensure the new line is a normal Paragraph
+    if (e.key === "Enter" && !e.shiftKey) {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0) {
+        const node = sel.anchorNode;
+        const elem = node?.nodeType === Node.ELEMENT_NODE ? (node as HTMLElement) : node?.parentElement;
+        const headingOrQuote = elem?.closest("h1, h2, h3, blockquote, div[data-callout='true']");
+        if (headingOrQuote && el.contains(headingOrQuote)) {
+          // Let browser split or create line, then ensure the new empty block is <p>
+          setTimeout(() => {
+            const curSel = window.getSelection();
+            const curNode = curSel?.anchorNode;
+            const curEl = curNode?.nodeType === Node.ELEMENT_NODE ? (curNode as HTMLElement) : curNode?.parentElement;
+            const curBlock = curEl?.closest("h1, h2, h3, blockquote, div[data-callout='true']");
+            if (curBlock && curBlock !== headingOrQuote && !stripHtml(curBlock.innerHTML)) {
+              document.execCommand("formatBlock", false, "P");
+            }
+            emitChange();
+          }, 0);
+        }
+      }
+    }
   }
 
   return (
@@ -241,210 +807,31 @@ function Editable({
       ref={ref}
       role="textbox"
       aria-multiline="true"
+      aria-label="Post body"
       contentEditable
       suppressContentEditableWarning
       spellCheck
-      data-placeholder={placeholder}
-      className={`a-be-text ${className ?? ""}`}
-      onInput={onInput}
-      onKeyDown={(e) => {
-        // Keyboard shortcuts for rich text
-        if ((e.metaKey || e.ctrlKey) && !e.shiftKey) {
-          if (e.key === 'b') { e.preventDefault(); document.execCommand('bold'); e.currentTarget.dispatchEvent(new Event('input', { bubbles: true })); return; }
-          if (e.key === 'i') { e.preventDefault(); document.execCommand('italic'); e.currentTarget.dispatchEvent(new Event('input', { bubbles: true })); return; }
-          if (e.key === 'u') { e.preventDefault(); document.execCommand('underline'); e.currentTarget.dispatchEvent(new Event('input', { bubbles: true })); return; }
-        }
-        onKeyDown?.(e);
+      data-placeholder={
+        isFirst
+          ? "Start writing your post here, or paste your full article from Google Docs…"
+          : "Continue writing here…"
+      }
+      className={`a-be-flow ${!isOnly && !isFirst ? "is-compact" : ""}`}
+      onFocus={(e) => {
+        onActiveFlowRef(e.currentTarget);
+        onSelectionStateChange();
       }}
+      onMouseUp={onSelectionStateChange}
+      onKeyUp={onSelectionStateChange}
+      onInput={emitChange}
+      onKeyDown={onKeyDown}
       onPaste={onPaste}
     />
   );
 }
 
-function useTheme(): "light" | "dark" {
-  const [theme, setTheme] = useState<"light" | "dark">("light");
-  useEffect(() => {
-    const read = () => setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
-    read();
-    const obs = new MutationObserver(read);
-    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-    return () => obs.disconnect();
-  }, []);
-  return theme;
-}
-
 /* ------------------------------------------------------------------ */
-/*  Floating Toolbar (Bubble Menu)                                     */
-/* ------------------------------------------------------------------ */
-type BubbleState = {
-  rect: DOMRect;
-  editorEl: HTMLElement;
-  savedRange?: Range;
-};
-
-function FloatingToolbar() {
-  const [state, setState] = useState<BubbleState | null>(null);
-  const [showLink, setShowLink] = useState(false);
-  const [linkUrl, setLinkUrl] = useState("");
-  const linkInputRef = useRef<HTMLInputElement>(null);
-  const toolbarRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const checkSelection = () => {
-      const sel = window.getSelection();
-      if (!sel || sel.isCollapsed || !sel.toString().trim()) {
-        setTimeout(() => {
-          if (!document.querySelector('.a-be-bubble:hover') && !document.querySelector('.a-be-bubble-link:hover')) {
-            setState(null);
-            setShowLink(false);
-          }
-        }, 100);
-        return;
-      }
-      const range = sel.getRangeAt(0);
-      const editorEl = range.commonAncestorContainer.parentElement?.closest('.a-be-text');
-      if (editorEl) {
-        setState({ rect: range.getBoundingClientRect(), editorEl: editorEl as HTMLElement });
-      } else {
-        setState(null);
-        setShowLink(false);
-      }
-    };
-
-    document.addEventListener('mouseup', checkSelection);
-    document.addEventListener('keyup', checkSelection);
-    document.addEventListener('scroll', checkSelection, true);
-
-    return () => {
-      document.removeEventListener('mouseup', checkSelection);
-      document.removeEventListener('keyup', checkSelection);
-      document.removeEventListener('scroll', checkSelection, true);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (showLink && linkInputRef.current) {
-      linkInputRef.current.focus();
-    }
-  }, [showLink]);
-
-  if (!state) return null;
-
-  const format = (cmd: string, val?: string) => {
-    document.execCommand(cmd, false, val);
-    if (cmd === 'createLink') {
-      const links = state.editorEl.querySelectorAll('a');
-      links.forEach(link => {
-        if (!link.getAttribute('target')) {
-          link.setAttribute('target', '_blank');
-          link.setAttribute('rel', 'noopener noreferrer');
-        }
-      });
-    }
-    state.editorEl.dispatchEvent(new Event('input', { bubbles: true }));
-    state.editorEl.focus();
-  };
-
-  const formatCode = () => {
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0) {
-      const range = sel.getRangeAt(0);
-      const text = range.toString();
-      if (text) {
-        const code = document.createElement('code');
-        code.textContent = text;
-        range.deleteContents();
-        range.insertNode(code);
-        range.setStartAfter(code);
-        range.setEndAfter(code);
-        sel.removeAllRanges();
-        sel.addRange(range);
-        state.editorEl.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-    }
-  };
-
-  const handleLinkClick = () => {
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0) {
-      setState(prev => prev ? { ...prev, savedRange: sel.getRangeAt(0).cloneRange() } : null);
-    }
-    setShowLink(true);
-  };
-
-  const applyLink = (e: FormEvent) => {
-    e.preventDefault();
-    if (!linkUrl.trim()) {
-      format('unlink');
-    } else {
-      if (state.savedRange) {
-        const sel = window.getSelection();
-        sel?.removeAllRanges();
-        sel?.addRange(state.savedRange);
-      }
-      format('createLink', linkUrl);
-    }
-    setShowLink(false);
-    setLinkUrl("");
-  };
-
-  const removeLink = () => {
-    if (state.savedRange) {
-      const sel = window.getSelection();
-      sel?.removeAllRanges();
-      sel?.addRange(state.savedRange);
-    }
-    format('unlink');
-    setShowLink(false);
-    setLinkUrl("");
-  };
-
-  const spaceAbove = state.rect.top;
-  const top = spaceAbove < 60 
-    ? state.rect.bottom + 10 
-    : state.rect.top - 48;
-  const left = state.rect.left + (state.rect.width / 2);
-
-  return (
-    <div
-      ref={toolbarRef}
-      className="a-be-bubble"
-      style={{ top, left }}
-      onMouseDown={(e) => e.preventDefault()}
-    >
-      <button type="button" onMouseDown={(e) => { e.preventDefault(); format('bold'); }} aria-label="Bold"><b>B</b></button>
-      <button type="button" onMouseDown={(e) => { e.preventDefault(); format('italic'); }} aria-label="Italic"><i>I</i></button>
-      <button type="button" onMouseDown={(e) => { e.preventDefault(); format('underline'); }} aria-label="Underline"><u>U</u></button>
-      <button type="button" onMouseDown={(e) => { e.preventDefault(); format('strikeThrough'); }} aria-label="Strikethrough"><s>S</s></button>
-      <div className="sep" />
-      <button type="button" onMouseDown={(e) => { e.preventDefault(); formatCode(); }} aria-label="Code">&lt;/&gt;</button>
-      <div className="sep" />
-      <button type="button" onMouseDown={(e) => { e.preventDefault(); handleLinkClick(); }} aria-label="Link">
-        <Icon name="link" />
-      </button>
-
-      {showLink && (
-        <form className="a-be-bubble-link" onSubmit={applyLink} onMouseDown={(e) => e.stopPropagation()}>
-          <input
-            ref={linkInputRef}
-            type="url"
-            placeholder="https://example.com"
-            value={linkUrl}
-            onChange={(e) => setLinkUrl(e.target.value)}
-            onKeyDown={(e) => {
-               if (e.key === 'Escape') { setShowLink(false); state.editorEl.focus(); }
-            }}
-          />
-          <button type="submit">Link</button>
-          <button type="button" onClick={removeLink} className="is-danger">Unlink</button>
-        </form>
-      )}
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Image picker                                                       */
+/*  Image Picker                                                      */
 /* ------------------------------------------------------------------ */
 export function ImagePicker({
   url, onUrl, onError, onUploaded, onBroken, hideUrl, compact, variant,
@@ -534,7 +921,7 @@ export function ImagePicker({
           <button type="button" className="a-be-drop-empty" onClick={() => input.current?.click()} disabled={uploading}>
             <Icon name={variant === "cover" ? "imagePlus" : "upload"} />
             <strong>{variant === "cover" ? "Add a featured image" : "Upload an image"}</strong>
-            {!compact && <span>Drop a file here or click to browse. It is cropped to 16:9 ({IMAGE_SIZE_LABEL}) automatically.</span>}
+            {!compact && <span>Drop a file here or click to browse. Cropped to 16:9 ({IMAGE_SIZE_LABEL}) automatically.</span>}
           </button>
         )}
         {uploading && <div className="a-be-drop-busy" role="status">Resizing and uploading…</div>}
@@ -565,206 +952,829 @@ export function ImagePicker({
   );
 }
 
+function useTheme(): "light" | "dark" {
+  const [theme, setTheme] = useState<"light" | "dark">("light");
+  useEffect(() => {
+    const read = () => setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+    read();
+    const obs = new MutationObserver(read);
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => obs.disconnect();
+  }, []);
+  return theme;
+}
+
+function findClosestAnchor(node: Node | null): HTMLAnchorElement | null {
+  let curr: Node | null = node;
+  while (curr) {
+    if (curr.nodeType === Node.ELEMENT_NODE && (curr as HTMLElement).tagName.toLowerCase() === "a") {
+      return curr as HTMLAnchorElement;
+    }
+    curr = curr.parentNode;
+  }
+  return null;
+}
+
 /* ------------------------------------------------------------------ */
-/*  Canvas                                                             */
+/*  BlockCanvas (Blogger / WordPress / Google Docs Continuous Mode)   */
 /* ------------------------------------------------------------------ */
-export default function BlockCanvas({ blocks, onChange, theme: themeProp }: { blocks: EditorBlock[]; onChange: (blocks: EditorBlock[]) => void; theme?: "light" | "dark" }) {
+
+type Segment =
+  | { kind: "flow"; startIndex: number; blocks: EditorBlock[] }
+  | { kind: "widget"; index: number; block: EditorBlock };
+
+type ActiveFormatState = {
+  blockTag: "paragraph" | "heading-1" | "heading-2" | "heading-3" | "quote" | "callout";
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  strike: boolean;
+  ul: boolean;
+  ol: boolean;
+  linkHref: string;
+};
+
+type LinkDialogState = {
+  flowEl: HTMLDivElement;
+  range: Range | null;
+  top: number;
+  left: number;
+  url: string;
+};
+
+const EXTRA_WIDGET_ITEMS: { label: string; type: ContentBlock["type"]; icon: IconName }[] = [
+  { label: "Image", type: "image", icon: "image" },
+  { label: "Gallery", type: "gallery", icon: "gallery" },
+  { label: "Table", type: "table", icon: "table" },
+  { label: "Custom HTML & CSS", type: "html", icon: "html" },
+  { label: "Video (YouTube / Vimeo)", type: "video", icon: "video" },
+  { label: "Audio (Spotify / File)", type: "audio", icon: "audio" },
+  { label: "Code Block", type: "code", icon: "code" },
+  { label: "Markdown Block", type: "markdown", icon: "markdown" },
+  { label: "Button Link", type: "button", icon: "button" },
+  { label: "Horizontal Divider", type: "divider", icon: "minus" },
+];
+
+export default function BlockCanvas({
+  blocks,
+  onChange,
+  theme: themeProp,
+  headerSlot,
+}: {
+  blocks: EditorBlock[];
+  onChange: (blocks: EditorBlock[]) => void;
+  theme?: "light" | "dark";
+  headerSlot?: ReactNode;
+}) {
   const detected = useTheme();
   const theme = themeProp ?? detected;
-  const [menu, setMenu] = useState<MenuState | null>(null);
-  const [focus, setFocus] = useState<Focus>({ id: null, n: 0 });
-  const [over, setOver] = useState<number | null>(null);
-  const dragFrom = useRef<number | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const nonce = useRef(0);
 
-  const focusOn = (id: string | null) => setFocus({ id, n: ++nonce.current });
+  // syncVersion only increments on external changes (Undo/Redo, widget insert/delete) so typing never resets the DOM cursor
+  const [syncVersion, setSyncVersion] = useState(1);
+  const [past, setPast] = useState<EditorBlock[][]>([]);
+  const [future, setFuture] = useState<EditorBlock[][]>([]);
+  const [insertMenuPos, setInsertMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const [linkDialog, setLinkDialog] = useState<LinkDialogState | null>(null);
+  const [fmt, setFmt] = useState<ActiveFormatState>({
+    blockTag: "paragraph",
+    bold: false,
+    italic: false,
+    underline: false,
+    strike: false,
+    ul: false,
+    ol: false,
+    linkHref: "",
+  });
 
-  const query = menu?.query.trim().toLowerCase() ?? "";
-  const filtered = menu ? FLAT.filter((item) => item.label.toLowerCase().includes(query)) : [];
-  const activeIndex = menu ? Math.min(menu.active, Math.max(0, filtered.length - 1)) : 0;
+  const activeFlowRef = useRef<HTMLDivElement | null>(null);
+  const docRef = useRef<HTMLDivElement>(null);
+  const insertMenuRef = useRef<HTMLDivElement>(null);
+  const linkInputRef = useRef<HTMLInputElement>(null);
 
-  function closeMenu(refocus: boolean) {
-    const blockId = menu?.blockId ?? null;
-    setMenu(null);
-    if (refocus && blockId) {
-      const block = blocks.find((b) => b.id === blockId);
-      if (block) focusOn(focusKey(block));
+  // Group consecutive text/list/heading blocks into a single continuous RichFlowSurface,
+  // and keep embedded media/HTML/table blocks as inline widgets between flow segments.
+  const segments = useMemo<Segment[]>(() => {
+    const list: Segment[] = [];
+    let currentFlow: { startIndex: number; blocks: EditorBlock[] } | null = null;
+
+    blocks.forEach((b, idx) => {
+      if (isFlowBlock(b)) {
+        if (!currentFlow) {
+          currentFlow = { startIndex: idx, blocks: [b] };
+        } else {
+          currentFlow.blocks.push(b);
+        }
+      } else {
+        if (currentFlow) {
+          list.push({ kind: "flow", ...currentFlow });
+          currentFlow = null;
+        }
+        list.push({ kind: "widget", index: idx, block: b });
+      }
+    });
+
+    if (currentFlow) {
+      list.push({ kind: "flow", ...(currentFlow as { startIndex: number; blocks: EditorBlock[] }) });
     }
+
+    // Ensure there is always a continuous writing area at the end of the document
+    if (list.length === 0 || list[list.length - 1].kind === "widget") {
+      list.push({
+        kind: "flow",
+        startIndex: blocks.length,
+        blocks: [createBlock("paragraph")],
+      });
+    }
+
+    return list;
+  }, [blocks]);
+
+  function pushHistory(prevBlocks: EditorBlock[]) {
+    setPast((p) => [...p.slice(-39), prevBlocks]);
+    setFuture([]);
   }
 
-  useEffect(() => {
-    if (!menu) return;
-    const onPointer = (e: MouseEvent) => {
-      if (!menuRef.current?.contains(e.target as Node)) setMenu(null);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); closeMenu(true); return; }
-      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-        e.preventDefault();
-        if (!filtered.length) return;
-        const step = e.key === "ArrowDown" ? 1 : -1;
-        setMenu((m) => (m ? { ...m, active: (activeIndex + step + filtered.length) % filtered.length } : m));
-      }
-      if (e.key === "Enter") {
-        e.preventDefault();
-        const item = filtered[activeIndex];
-        if (item) insert(menu.index, item.type, item.level);
-      }
-    };
-    window.addEventListener("mousedown", onPointer);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onPointer);
-      window.removeEventListener("keydown", onKey);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [menu, blocks]);
-
-  function insert(index: number, type: ContentBlock["type"], level?: HeadingLevel) {
-    const block = createBlock(type, level);
-    const next = blocks.slice();
-    const current = next[index];
-    if (current && current.type === "paragraph" && "text" in current && !stripHtml(current.text).trim()) next.splice(index, 1, block);
-    else next.splice(Math.min(index + 1, next.length), 0, block);
-    onChange(next.length ? next : [block]);
-    focusOn(focusKey(block));
-    setMenu(null);
+  function undo() {
+    if (!past.length) return;
+    const prev = past[past.length - 1];
+    setPast((p) => p.slice(0, -1));
+    setFuture((f) => [blocks, ...f.slice(0, 39)]);
+    onChange(prev);
+    setSyncVersion((v) => v + 1);
   }
 
-  function convert(index: number, type: ContentBlock["type"], level?: HeadingLevel) {
-    const old = blocks[index];
-    if (!old) return;
-    const replaced = { ...createBlock(type, level), id: old.id } as EditorBlock;
-    const next = blocks.slice();
-    if (type === "divider") {
-      const para = createBlock("paragraph");
-      next.splice(index, 1, replaced, para);
-      onChange(next);
-      focusOn(para.id);
-      return;
-    }
-    next.splice(index, 1, replaced);
+  function redo() {
+    if (!future.length) return;
+    const next = future[0];
+    setFuture((f) => f.slice(1));
+    setPast((p) => [...p.slice(-39), blocks]);
     onChange(next);
-    focusOn(focusKey(replaced));
+    setSyncVersion((v) => v + 1);
   }
 
-  function update(id: string, block: EditorBlock) {
-    onChange(blocks.map((item) => (item.id === id ? block : item)));
+  function inspectSelectionState() {
+    const sel = window.getSelection();
+    const flowEl = activeFlowRef.current;
+    if (!sel || !sel.rangeCount || !flowEl || !flowEl.contains(sel.anchorNode)) return;
+
+    const node = sel.anchorNode;
+    const el = node?.nodeType === Node.ELEMENT_NODE ? (node as HTMLElement) : node?.parentElement;
+    if (!el) return;
+
+    let blockTag: ActiveFormatState["blockTag"] = "paragraph";
+    if (el.closest("h1")) blockTag = "heading-1";
+    else if (el.closest("h2")) blockTag = "heading-2";
+    else if (el.closest("h3")) blockTag = "heading-3";
+    else if (el.closest("blockquote")) blockTag = "quote";
+    else if (el.closest("div[data-callout='true']")) blockTag = "callout";
+
+    const anchor = findClosestAnchor(node);
+
+    setFmt({
+      blockTag,
+      bold: Boolean(el.closest("b, strong")) || document.queryCommandState("bold"),
+      italic: Boolean(el.closest("i, em")) || document.queryCommandState("italic"),
+      underline: Boolean(el.closest("u")) || document.queryCommandState("underline"),
+      strike: Boolean(el.closest("s, strike, del")) || document.queryCommandState("strikeThrough"),
+      ul: Boolean(el.closest("ul")) || document.queryCommandState("insertUnorderedList"),
+      ol: Boolean(el.closest("ol")) || document.queryCommandState("insertOrderedList"),
+      linkHref: anchor?.getAttribute("href") ?? "",
+    });
   }
 
-  function remove(index: number) {
-    const next = blocks.filter((_, i) => i !== index);
+  function ensureFlowFocus(): HTMLDivElement | null {
+    if (activeFlowRef.current && document.body.contains(activeFlowRef.current)) {
+      activeFlowRef.current.focus();
+      return activeFlowRef.current;
+    }
+    const firstFlow = docRef.current?.querySelector<HTMLDivElement>(".a-be-flow") ?? null;
+    if (firstFlow) {
+      activeFlowRef.current = firstFlow;
+      firstFlow.focus();
+    }
+    return firstFlow;
+  }
+
+  function syncActiveFlowDom(flowEl: HTMLDivElement) {
+    flowEl.dispatchEvent(new Event("input", { bubbles: true }));
+    inspectSelectionState();
+  }
+
+  function applyBlockFormat(targetFormat: ActiveFormatState["blockTag"]) {
+    const flowEl = ensureFlowFocus();
+    if (!flowEl) return;
+
+    pushHistory(blocks);
+    const sel = window.getSelection();
+    const node = sel?.anchorNode;
+    const el = node?.nodeType === Node.ELEMENT_NODE ? (node as HTMLElement) : node?.parentElement;
+
+    // If inside a Callout and switching to something else, unwrap callout attribute
+    const existingCallout = el?.closest("div[data-callout='true']") as HTMLElement | null;
+    if (existingCallout && flowEl.contains(existingCallout) && targetFormat !== "callout") {
+      existingCallout.removeAttribute("data-callout");
+    }
+
+    if (targetFormat === "callout") {
+      if (existingCallout && flowEl.contains(existingCallout)) {
+        existingCallout.removeAttribute("data-callout");
+        document.execCommand("formatBlock", false, "P");
+      } else {
+        document.execCommand("formatBlock", false, "DIV");
+        const curSel = window.getSelection();
+        const curNode = curSel?.anchorNode;
+        const curEl = curNode?.nodeType === Node.ELEMENT_NODE ? (curNode as HTMLElement) : curNode?.parentElement;
+        const blockEl = curEl?.closest("div, p, h1, h2, h3, blockquote") as HTMLElement | null;
+        if (blockEl && blockEl !== flowEl && flowEl.contains(blockEl)) {
+          const calloutDiv = document.createElement("div");
+          calloutDiv.setAttribute("data-callout", "true");
+          calloutDiv.innerHTML = sanitizeInlineHtml(blockEl.innerHTML) || "<br>";
+          blockEl.replaceWith(calloutDiv);
+        }
+      }
+    } else if (targetFormat === "heading-1") {
+      document.execCommand("formatBlock", false, fmt.blockTag === "heading-1" ? "P" : "H1");
+    } else if (targetFormat === "heading-2") {
+      document.execCommand("formatBlock", false, fmt.blockTag === "heading-2" ? "P" : "H2");
+    } else if (targetFormat === "heading-3") {
+      document.execCommand("formatBlock", false, fmt.blockTag === "heading-3" ? "P" : "H3");
+    } else if (targetFormat === "quote") {
+      document.execCommand("formatBlock", false, fmt.blockTag === "quote" ? "P" : "BLOCKQUOTE");
+    } else {
+      document.execCommand("formatBlock", false, "P");
+    }
+
+    syncActiveFlowDom(flowEl);
+  }
+
+  function toggleInlineCmd(cmd: "bold" | "italic" | "underline" | "strikeThrough" | "insertUnorderedList" | "insertOrderedList" | "removeFormat" | "code") {
+    const flowEl = ensureFlowFocus();
+    if (!flowEl) return;
+
+    if (cmd === "insertUnorderedList" || cmd === "insertOrderedList") {
+      pushHistory(blocks);
+    }
+
+    if (cmd === "code") {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+        const range = sel.getRangeAt(0);
+        const text = range.toString();
+        if (text) {
+          const code = document.createElement("code");
+          code.textContent = text;
+          range.deleteContents();
+          range.insertNode(code);
+          range.setStartAfter(code);
+          range.setEndAfter(code);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      }
+    } else if (cmd === "removeFormat") {
+      document.execCommand("removeFormat");
+      document.execCommand("unlink");
+    } else {
+      document.execCommand(cmd, false);
+    }
+
+    syncActiveFlowDom(flowEl);
+  }
+
+  function openLinkPopover(triggerEl?: HTMLElement) {
+    const flowEl = ensureFlowFocus();
+    if (!flowEl) return;
+
+    const sel = window.getSelection();
+    const range = sel && sel.rangeCount > 0 && flowEl.contains(sel.anchorNode) ? sel.getRangeAt(0).cloneRange() : null;
+    const existing = sel && sel.rangeCount > 0 ? findClosestAnchor(sel.anchorNode)?.getAttribute("href") ?? "" : "";
+    const rect =
+      range && !range.collapsed
+        ? range.getBoundingClientRect()
+        : (triggerEl ?? flowEl).getBoundingClientRect();
+
+    setLinkDialog({
+      flowEl,
+      range,
+      top: rect.bottom + 8,
+      left: Math.max(170, Math.min(window.innerWidth - 170, rect.left + rect.width / 2)),
+      url: existing,
+    });
+  }
+
+  function applyLinkFromDialog(rawUrl: string) {
+    if (!linkDialog) return;
+    const { flowEl, range } = linkDialog;
+    flowEl.focus();
+
+    if (range) {
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    }
+
+    const href = normalizeHref(rawUrl);
+    const sel = window.getSelection();
+    const existingAnchor = sel && sel.rangeCount > 0 ? findClosestAnchor(sel.anchorNode) : null;
+
+    if (!href) {
+      if (existingAnchor && flowEl.contains(existingAnchor)) {
+        const textNode = document.createTextNode(existingAnchor.textContent ?? "");
+        existingAnchor.replaceWith(textNode);
+      } else {
+        document.execCommand("unlink");
+      }
+    } else if (existingAnchor && flowEl.contains(existingAnchor) && (!sel || sel.isCollapsed)) {
+      existingAnchor.setAttribute("href", href);
+    } else if (sel && sel.rangeCount > 0) {
+      const r = sel.getRangeAt(0);
+      const selectedText = r.toString().trim();
+      const a = document.createElement("a");
+      a.setAttribute("href", href);
+      a.textContent = selectedText || rawUrl.trim();
+      r.deleteContents();
+      r.insertNode(a);
+      r.setStartAfter(a);
+      r.setEndAfter(a);
+      sel.removeAllRanges();
+      sel.addRange(r);
+    }
+
+    setLinkDialog(null);
+    syncActiveFlowDom(flowEl);
+  }
+
+  /**
+   * Inserts a widget block (Image, Custom HTML, Table, Video, Audio, Gallery, Code, Markdown, Button)
+   * right at the cursor position inside the document, automatically ensuring a continuous writing
+   * paragraph exists below it so the user can keep typing without any extra clicks.
+   */
+  function insertBlockAtCursor(type: ContentBlock["type"]) {
+    setInsertMenuPos(null);
+
+    if (type === "divider") {
+      const flowEl = ensureFlowFocus();
+      if (flowEl) {
+        pushHistory(blocks);
+        document.execCommand("insertHTML", false, "<hr><p><br></p>");
+        syncActiveFlowDom(flowEl);
+        return;
+      }
+    }
+
+    pushHistory(blocks);
+    const widgetBlock = createBlock(type);
+
+    // Find which block ID the cursor is currently inside
+    const sel = window.getSelection();
+    let targetBlockId: string | null = null;
+    if (sel && sel.rangeCount > 0 && activeFlowRef.current?.contains(sel.anchorNode)) {
+      const node = sel.anchorNode;
+      const el = node?.nodeType === Node.ELEMENT_NODE ? (node as HTMLElement) : node?.parentElement;
+      const bidEl = el?.closest("[data-bid]") as HTMLElement | null;
+      if (bidEl) targetBlockId = bidEl.getAttribute("data-bid");
+    }
+
+    const next = blocks.slice();
+    let insertIdx = next.length;
+    if (targetBlockId) {
+      const foundIdx = next.findIndex((b) => b.id === targetBlockId);
+      if (foundIdx !== -1) {
+        const cur = next[foundIdx];
+        const isEmptyPara = cur.type === "paragraph" && !stripHtml(cur.text);
+        if (isEmptyPara) {
+          next.splice(foundIdx, 1, widgetBlock);
+          insertIdx = foundIdx;
+        } else {
+          next.splice(foundIdx + 1, 0, widgetBlock);
+          insertIdx = foundIdx + 1;
+        }
+      } else {
+        next.push(widgetBlock);
+        insertIdx = next.length - 1;
+      }
+    } else {
+      // If the last block is an empty paragraph, replace it and add a new trailing paragraph
+      const last = next[next.length - 1];
+      if (last && last.type === "paragraph" && !stripHtml(last.text)) {
+        next.splice(next.length - 1, 1, widgetBlock);
+        insertIdx = next.length - 1;
+      } else {
+        next.push(widgetBlock);
+        insertIdx = next.length - 1;
+      }
+    }
+
+    // Always ensure a paragraph exists after the inserted widget so writing continues seamlessly
+    if (!next[insertIdx + 1] || !isFlowBlock(next[insertIdx + 1])) {
+      next.splice(insertIdx + 1, 0, createBlock("paragraph"));
+    }
+
+    onChange(next);
+    setSyncVersion((v) => v + 1);
+  }
+
+  function updateFlowSegment(startIndex: number, oldCount: number, newFlowBlocks: EditorBlock[]) {
+    const next = blocks.slice();
+    next.splice(startIndex, oldCount, ...newFlowBlocks);
     onChange(next.length ? next : [createBlock("paragraph")]);
   }
 
-  function backspaceRemove(index: number) {
-    const prev = blocks[index - 1];
-    remove(index);
-    if (prev) focusOn(focusKey(prev));
-  }
-
-  function exitList(index: number) {
-    const block = blocks[index];
-    if (!block || (block.type !== "bulletList" && block.type !== "numberedList")) return;
-    const para = createBlock("paragraph");
+  function updateWidget(index: number, updated: EditorBlock) {
     const next = blocks.slice();
-    if (block.items.length <= 1) next.splice(index, 1, para);
-    else next.splice(index, 1, { ...block, items: block.items.slice(0, -1) }, para);
+    next[index] = updated;
     onChange(next);
-    focusOn(para.id);
   }
 
-  function pasteBlocks(index: number, chunks: string[]) {
-    const created = chunks.map((text) => ({ ...createBlock("paragraph"), text }) as EditorBlock);
-    const next = blocks.slice();
-    next.splice(index, 1, ...created);
-    onChange(next);
-    focusOn(created[created.length - 1].id);
+  function removeWidget(index: number) {
+    pushHistory(blocks);
+    const next = blocks.filter((_, i) => i !== index);
+    onChange(next.length ? next : [createBlock("paragraph")]);
+    setSyncVersion((v) => v + 1);
   }
 
-  function move(index: number, dir: -1 | 1) {
-    const j = index + dir;
-    if (j < 0 || j >= blocks.length) return;
+  function moveWidget(index: number, dir: -1 | 1) {
+    const target = index + dir;
+    if (target < 0 || target >= blocks.length) return;
+    pushHistory(blocks);
     const next = blocks.slice();
     const [item] = next.splice(index, 1);
-    next.splice(j, 0, item);
+    next.splice(target, 0, item);
     onChange(next);
+    setSyncVersion((v) => v + 1);
   }
 
-  function openMenu(index: number, anchor: HTMLElement) {
-    const rect = anchor.getBoundingClientRect();
-    const width = 300;
-    const height = 400;
-    const left = Math.max(10, Math.min(rect.left, window.innerWidth - width - 10));
-    const below = rect.bottom + 8;
-    const top = below + height > window.innerHeight ? Math.max(10, rect.top - height) : below;
-    setMenu({ index, blockId: blocks[index]?.id ?? "", top, left, active: 0, query: "" });
-  }
+  // Close Insert Menu on outside click or Escape
+  useEffect(() => {
+    if (!insertMenuPos) return;
+    const onDown = (e: MouseEvent) => {
+      if (!insertMenuRef.current?.contains(e.target as Node)) setInsertMenuPos(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setInsertMenuPos(null);
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [insertMenuPos]);
 
-  function onDrop(index: number) {
-    const from = dragFrom.current;
-    dragFrom.current = null;
-    setOver(null);
-    if (from == null || from === index) return;
-    const next = blocks.slice();
-    const [item] = next.splice(from, 1);
-    next.splice(index, 0, item);
-    onChange(next);
-  }
+  // Focus link input when opened
+  useEffect(() => {
+    if (linkDialog && linkInputRef.current) {
+      linkInputRef.current.focus();
+      linkInputRef.current.select();
+    }
+  }, [linkDialog]);
+
+  // Global keyboard shortcuts inside the document (Ctrl+K for link, Ctrl+Z / Ctrl+Y for undo/redo)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const inDoc = docRef.current?.contains(target ?? null) ?? false;
+      if (!inDoc) return;
+
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        if (target?.closest(".a-be-flow")) {
+          e.preventDefault();
+          openLinkPopover();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blocks]);
 
   const words = countWords(blocks);
   const minutes = Math.max(1, Math.ceil(words / 200));
 
   return (
     <div className="a-be" data-be-theme={theme}>
-      <div className="a-be-canvas">
-        {blocks.map((block, index) => (
-          <div
-            key={block.id}
-            data-type={block.type}
-            className={`a-be-block ${over === index ? "is-over" : ""}`}
-            onDragOver={(e) => { if (dragFrom.current !== null) { e.preventDefault(); setOver(index); } }}
-            onDrop={(e) => { if (dragFrom.current !== null) { e.preventDefault(); onDrop(index); } }}
+      {/* Sticky Blogger / WordPress / Google Docs Formatting & Insert Toolbar */}
+      <div className="a-be-toolbar" role="toolbar" aria-label="Formatting and insert toolbar" onMouseDown={(e) => {
+        // Prevent toolbar button clicks from stealing selection from the writing area
+        if ((e.target as HTMLElement).tagName !== "SELECT") {
+          e.preventDefault();
+        }
+      }}>
+        <div className="a-be-toolbar-group">
+          <button
+            type="button"
+            className="a-be-tbtn"
+            onClick={undo}
+            disabled={!past.length}
+            title="Undo (Ctrl+Z)"
+            aria-label="Undo"
           >
-            <div className="a-be-gutter">
-              <button type="button" className="a-be-plus" aria-label="Insert a block" aria-expanded={menu?.index === index} onClick={(e) => openMenu(index, e.currentTarget)}>
-                <Icon name="plus" />
-              </button>
-              <button
-                type="button"
-                className="a-be-grip"
-                aria-label="Drag to reorder"
-                draggable
-                onDragStart={() => { dragFrom.current = index; }}
-                onDragEnd={() => { dragFrom.current = null; setOver(null); }}
-              >
-                <Icon name="grip" />
-              </button>
-            </div>
-            <div className="a-be-body">
-              <div className="a-be-tools">
-                <button type="button" className="a-be-tool" aria-label="Move up" disabled={index === 0} onClick={() => move(index, -1)}><Icon name="up" /></button>
-                <button type="button" className="a-be-tool" aria-label="Move down" disabled={index === blocks.length - 1} onClick={() => move(index, 1)}><Icon name="down" /></button>
-                <button type="button" className="a-be-tool danger" aria-label="Delete block" onClick={() => remove(index)}><Icon name="trash" /></button>
+            <Icon name="undo" />
+          </button>
+          <button
+            type="button"
+            className="a-be-tbtn"
+            onClick={redo}
+            disabled={!future.length}
+            title="Redo (Ctrl+Shift+Z)"
+            aria-label="Redo"
+          >
+            <Icon name="redo" />
+          </button>
+        </div>
+
+        <div className="a-be-toolbar-sep" aria-hidden="true" />
+
+        {/* Text Style Dropdown + Quick Heading Buttons */}
+        <div className="a-be-toolbar-group">
+          <select
+            className="a-be-block-select"
+            aria-label="Text style"
+            value={fmt.blockTag}
+            onChange={(e) => applyBlockFormat(e.target.value as ActiveFormatState["blockTag"])}
+          >
+            <option value="paragraph">Paragraph</option>
+            <option value="heading-1">Heading 1</option>
+            <option value="heading-2">Heading 2</option>
+            <option value="heading-3">Heading 3</option>
+            <option value="quote">Quote</option>
+            <option value="callout">Callout Box</option>
+          </select>
+
+          <button
+            type="button"
+            className={`a-be-tbtn ${fmt.blockTag === "paragraph" ? "is-active" : ""}`}
+            onClick={() => applyBlockFormat("paragraph")}
+            title="Normal Paragraph"
+          >
+            P
+          </button>
+          <button
+            type="button"
+            className={`a-be-tbtn ${fmt.blockTag === "heading-1" ? "is-active" : ""}`}
+            onClick={() => applyBlockFormat("heading-1")}
+            title="Heading 1"
+          >
+            H1
+          </button>
+          <button
+            type="button"
+            className={`a-be-tbtn ${fmt.blockTag === "heading-2" ? "is-active" : ""}`}
+            onClick={() => applyBlockFormat("heading-2")}
+            title="Heading 2"
+          >
+            H2
+          </button>
+          <button
+            type="button"
+            className={`a-be-tbtn ${fmt.blockTag === "heading-3" ? "is-active" : ""}`}
+            onClick={() => applyBlockFormat("heading-3")}
+            title="Heading 3"
+          >
+            H3
+          </button>
+        </div>
+
+        <div className="a-be-toolbar-sep" aria-hidden="true" />
+
+        {/* Inline Rich Text Formatting */}
+        <div className="a-be-toolbar-group">
+          <button
+            type="button"
+            className={`a-be-tbtn ${fmt.bold ? "is-active" : ""}`}
+            onClick={() => toggleInlineCmd("bold")}
+            title="Bold (Ctrl+B)"
+            aria-label="Bold"
+          >
+            <b>B</b>
+          </button>
+          <button
+            type="button"
+            className={`a-be-tbtn ${fmt.italic ? "is-active" : ""}`}
+            onClick={() => toggleInlineCmd("italic")}
+            title="Italic (Ctrl+I)"
+            aria-label="Italic"
+          >
+            <i>I</i>
+          </button>
+          <button
+            type="button"
+            className={`a-be-tbtn ${fmt.underline ? "is-active" : ""}`}
+            onClick={() => toggleInlineCmd("underline")}
+            title="Underline (Ctrl+U)"
+            aria-label="Underline"
+          >
+            <u>U</u>
+          </button>
+          <button
+            type="button"
+            className={`a-be-tbtn ${fmt.strike ? "is-active" : ""}`}
+            onClick={() => toggleInlineCmd("strikeThrough")}
+            title="Strikethrough"
+            aria-label="Strikethrough"
+          >
+            <s>S</s>
+          </button>
+          <button
+            type="button"
+            className="a-be-tbtn"
+            onClick={() => toggleInlineCmd("code")}
+            title="Inline Code"
+            aria-label="Inline Code"
+          >
+            &lt;/&gt;
+          </button>
+          <button
+            type="button"
+            className={`a-be-tbtn ${fmt.linkHref ? "is-active" : ""}`}
+            onClick={(e) => openLinkPopover(e.currentTarget)}
+            title="Insert or Edit Link (Ctrl+K)"
+            aria-label="Insert Link"
+          >
+            <Icon name="link" />
+          </button>
+          <button
+            type="button"
+            className="a-be-tbtn"
+            onClick={() => toggleInlineCmd("removeFormat")}
+            title="Clear Formatting"
+            aria-label="Clear Formatting"
+          >
+            <Icon name="clearFormat" />
+          </button>
+        </div>
+
+        <div className="a-be-toolbar-sep" aria-hidden="true" />
+
+        {/* Lists, Quote & Callout */}
+        <div className="a-be-toolbar-group">
+          <button
+            type="button"
+            className={`a-be-tbtn ${fmt.ul ? "is-active" : ""}`}
+            onClick={() => toggleInlineCmd("insertUnorderedList")}
+            title="Bulleted List"
+            aria-label="Bulleted List"
+          >
+            <Icon name="list" />
+          </button>
+          <button
+            type="button"
+            className={`a-be-tbtn ${fmt.ol ? "is-active" : ""}`}
+            onClick={() => toggleInlineCmd("insertOrderedList")}
+            title="Numbered List"
+            aria-label="Numbered List"
+          >
+            <Icon name="olist" />
+          </button>
+          <button
+            type="button"
+            className={`a-be-tbtn ${fmt.blockTag === "quote" ? "is-active" : ""}`}
+            onClick={() => applyBlockFormat("quote")}
+            title="Blockquote"
+            aria-label="Blockquote"
+          >
+            <Icon name="quote" />
+          </button>
+          <button
+            type="button"
+            className={`a-be-tbtn ${fmt.blockTag === "callout" ? "is-active" : ""}`}
+            onClick={() => applyBlockFormat("callout")}
+            title="Callout Box"
+            aria-label="Callout Box"
+          >
+            <Icon name="callout" />
+          </button>
+        </div>
+
+        <div className="a-be-toolbar-sep" aria-hidden="true" />
+
+        {/* Insert Media / HTML / Table Controls */}
+        <div className="a-be-toolbar-group">
+          <button
+            type="button"
+            className="a-be-tbtn"
+            onClick={() => insertBlockAtCursor("image")}
+            title="Insert Image"
+          >
+            <Icon name="image" /> Image
+          </button>
+          <button
+            type="button"
+            className="a-be-tbtn"
+            onClick={() => insertBlockAtCursor("table")}
+            title="Insert Table"
+          >
+            <Icon name="table" /> Table
+          </button>
+          <button
+            type="button"
+            className="a-be-tbtn"
+            onClick={() => insertBlockAtCursor("html")}
+            title="Insert Custom HTML & CSS"
+          >
+            <Icon name="html" /> HTML
+          </button>
+          <button
+            type="button"
+            className="a-be-tbtn a-be-tbtn-insert"
+            aria-expanded={Boolean(insertMenuPos)}
+            onClick={(e) => {
+              if (insertMenuPos) {
+                setInsertMenuPos(null);
+              } else {
+                const rect = e.currentTarget.getBoundingClientRect();
+                setInsertMenuPos({
+                  top: rect.bottom + 6,
+                  left: Math.max(12, Math.min(rect.left, window.innerWidth - 290)),
+                });
+              }
+            }}
+            title="Insert more elements (Gallery, Video, Audio, Code, Markdown, Button, Divider)"
+          >
+            <Icon name="plus" /> Insert
+          </button>
+        </div>
+      </div>
+
+      {/* Header Slot (Cover Image & Post Title) */}
+      {headerSlot}
+
+      {/* Continuous Writing Document Surface */}
+      <div
+        ref={docRef}
+        className="a-be-doc"
+        onClick={(e) => {
+          // Clicking empty space at the bottom of the sheet focuses the last continuous writing area
+          if (e.target === docRef.current) {
+            const flows = docRef.current.querySelectorAll<HTMLDivElement>(".a-be-flow");
+            const lastFlow = flows[flows.length - 1];
+            lastFlow?.focus();
+          }
+        }}
+      >
+        {segments.map((seg, sIdx) => {
+          if (seg.kind === "flow") {
+            return (
+              <RichFlowSurface
+                key={`flow-${seg.startIndex}`}
+                blocks={seg.blocks}
+                syncVersion={syncVersion}
+                isFirst={sIdx === 0}
+                isOnly={segments.length === 1}
+                onChangeBlocks={(nextFlowBlocks) =>
+                  updateFlowSegment(seg.startIndex, seg.blocks.length, nextFlowBlocks)
+                }
+                onActiveFlowRef={(el) => {
+                  activeFlowRef.current = el;
+                }}
+                onSelectionStateChange={inspectSelectionState}
+              />
+            );
+          }
+
+          return (
+            <div key={seg.block.id} className="a-be-widget" contentEditable={false}>
+              <div className="a-be-widget-bar">
+                <div className="a-be-widget-actions">
+                  <button
+                    type="button"
+                    className="a-be-tool"
+                    aria-label="Move up"
+                    title="Move up"
+                    disabled={seg.index === 0}
+                    onClick={() => moveWidget(seg.index, -1)}
+                  >
+                    <Icon name="up" />
+                  </button>
+                  <button
+                    type="button"
+                    className="a-be-tool"
+                    aria-label="Move down"
+                    title="Move down"
+                    disabled={seg.index === blocks.length - 1}
+                    onClick={() => moveWidget(seg.index, 1)}
+                  >
+                    <Icon name="down" />
+                  </button>
+                  <button
+                    type="button"
+                    className="a-be-tool danger"
+                    aria-label="Delete"
+                    title="Remove block"
+                    onClick={() => removeWidget(seg.index)}
+                  >
+                    <Icon name="trash" />
+                  </button>
+                </div>
               </div>
-              <BlockBody
-                block={block}
+              <WidgetBody
+                block={seg.block}
                 theme={theme}
-                focus={focus}
-                placeholder={blocks.length === 1 ? "Start writing, or type / to add a block" : "Type / for blocks"}
-                onChange={(next) => update(block.id, next)}
-                onEnter={() => insert(index, "paragraph")}
-                onBackspaceEmpty={() => backspaceRemove(index)}
-                onSlash={(el) => openMenu(index, el)}
-                onConvert={(type, level) => convert(index, type, level)}
-                onPasteBlocks={(chunks) => pasteBlocks(index, chunks)}
-                onExitList={() => exitList(index)}
-                focusOn={focusOn}
+                onChange={(updated) => updateWidget(seg.index, updated)}
               />
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="a-be-words" aria-live="polite">
@@ -773,123 +1783,83 @@ export default function BlockCanvas({ blocks, onChange, theme: themeProp }: { bl
         <span>{minutes} min read</span>
       </div>
 
-      {menu && (
-        <div ref={menuRef} className="a-be-menu" role="menu" style={{ top: menu.top, left: menu.left }}>
-          <label className="a-be-menu-search">
-            <Icon name="search" />
-            <input
-              autoFocus
-              value={menu.query}
-              placeholder="Search blocks…"
-              aria-label="Search blocks"
-              onChange={(e) => setMenu({ ...menu, query: e.target.value, active: 0 })}
-            />
-          </label>
-          {filtered.length === 0 && <p className="a-be-menu-empty">No block matches “{menu.query}”.</p>}
-          {MENU.map((group) => {
-            const items = group.items.filter((item) => filtered.includes(item));
-            if (!items.length) return null;
-            return (
-              <div key={group.label}>
-                <div className="a-be-menu-label">{group.label}</div>
-                {items.map((item) => {
-                  const flat = filtered.indexOf(item);
-                  return (
-                    <button
-                      key={item.label}
-                      type="button"
-                      role="menuitem"
-                      className={`a-be-menu-item ${activeIndex === flat ? "is-active" : ""}`}
-                      onMouseEnter={() => setMenu({ ...menu, active: flat })}
-                      onClick={() => insert(menu.index, item.type, item.level)}
-                    >
-                      <Icon name={item.icon} />
-                      {item.label}
-                      {item.hint && <small>{item.hint}</small>}
-                    </button>
-                  );
-                })}
-              </div>
-            );
-          })}
+      {/* Top Toolbar "+ Insert" Dropdown */}
+      {insertMenuPos && (
+        <div
+          ref={insertMenuRef}
+          className="a-be-menu"
+          role="menu"
+          style={{ top: insertMenuPos.top, left: insertMenuPos.left }}
+        >
+          <div className="a-be-menu-label">Insert into post</div>
+          {EXTRA_WIDGET_ITEMS.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              role="menuitem"
+              className="a-be-menu-item"
+              onClick={() => insertBlockAtCursor(item.type)}
+            >
+              <Icon name={item.icon} />
+              {item.label}
+            </button>
+          ))}
         </div>
       )}
 
-      <FloatingToolbar />
+      {/* Hyperlink Popover */}
+      {linkDialog && (
+        <form
+          className="a-be-bubble-link"
+          style={{ top: linkDialog.top, left: linkDialog.left }}
+          onSubmit={(e: FormEvent) => {
+            e.preventDefault();
+            applyLinkFromDialog(linkDialog.url);
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <input
+            ref={linkInputRef}
+            type="text"
+            placeholder="https://example.com or /page"
+            aria-label="Hyperlink URL"
+            value={linkDialog.url}
+            onChange={(e) => setLinkDialog({ ...linkDialog, url: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setLinkDialog(null);
+                linkDialog.flowEl.focus();
+              }
+            }}
+          />
+          <button type="submit">Apply</button>
+          <button
+            type="button"
+            className="is-danger"
+            onClick={() => applyLinkFromDialog("")}
+          >
+            Unlink
+          </button>
+        </form>
+      )}
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/*  Block bodies                                                       */
+/*  Embedded Non-Text Widget Bodies (Image, HTML, Table, Video, etc.) */
 /* ------------------------------------------------------------------ */
-function BlockBody({
-  block, theme, focus, placeholder, onChange, onEnter, onBackspaceEmpty, onSlash, onConvert, onPasteBlocks, onExitList, focusOn,
+function WidgetBody({
+  block,
+  theme,
+  onChange,
 }: {
   block: EditorBlock;
   theme: "light" | "dark";
-  focus: Focus;
-  placeholder: string;
   onChange: (block: EditorBlock) => void;
-  onEnter: () => void;
-  onBackspaceEmpty: () => void;
-  onSlash: (anchor: HTMLElement) => void;
-  onConvert: (type: ContentBlock["type"], level?: HeadingLevel) => void;
-  onPasteBlocks: (chunks: string[]) => void;
-  onExitList: () => void;
-  focusOn: (id: string | null) => void;
 }) {
-  function textKeys(e: ReactKey<HTMLDivElement>, empty: boolean) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      onEnter();
-    } else if (e.key === "Backspace" && empty) {
-      e.preventDefault();
-      onBackspaceEmpty();
-    } else if (e.key === "/" && empty) {
-      e.preventDefault();
-      onSlash(e.currentTarget);
-    }
-  }
-
   switch (block.type) {
-    case "paragraph":
-      return (
-        <Editable key="paragraph" value={block.text} blockId={block.id} focus={focus} placeholder={placeholder}
-          onChange={(html) => {
-            const plain = stripHtml(html);
-            const sc = shortcut(plain);
-            if (sc) onConvert(sc.type, sc.level);
-            else onChange({ ...block, text: html });
-          }}
-          onPasteBlocks={onPasteBlocks}
-          onKeyDown={(e) => textKeys(e, stripHtml(block.text).trim() === "")} />
-      );
-    case "heading":
-      return (
-        <Editable key="heading" value={block.text} blockId={block.id} focus={focus} placeholder={`Heading ${block.level}`}
-          className={block.level === 1 ? "a-be-h1" : block.level === 3 ? "a-be-h3" : "a-be-h2"}
-          onChange={(html) => onChange({ ...block, text: html })}
-          onKeyDown={(e) => textKeys(e, stripHtml(block.text).trim() === "")} />
-      );
-    case "quote":
-      return (
-        <Editable key="quote" value={block.text} blockId={block.id} focus={focus} placeholder="Quote" className="a-be-quote"
-          onChange={(html) => onChange({ ...block, text: html })}
-          onKeyDown={(e) => textKeys(e, stripHtml(block.text).trim() === "")} />
-      );
-    case "callout":
-      return (
-        <div className="a-be-callout">
-          <Editable key="callout" value={block.text} blockId={block.id} focus={focus} placeholder="Highlighted note"
-            onChange={(html) => onChange({ ...block, text: html })} />
-        </div>
-      );
-    case "bulletList":
-    case "numberedList":
-      return <ListBlock block={block} focus={focus} focusOn={focusOn} onChange={onChange} onExitList={onExitList} onBackspaceEmpty={onBackspaceEmpty} />;
-    case "divider":
-      return <hr className="a-be-hr" />;
     case "image":
       return <ImageBlock block={block} onChange={onChange} />;
     case "gallery":
@@ -913,67 +1883,44 @@ function BlockBody({
   }
 }
 
-function ListBlock({
-  block, focus, focusOn, onChange, onExitList, onBackspaceEmpty,
+function ImageBlock({
+  block,
+  onChange,
 }: {
-  block: Extract<EditorBlock, { type: "bulletList" | "numberedList" }>;
-  focus: Focus;
-  focusOn: (id: string | null) => void;
+  block: Extract<EditorBlock, { type: "image" }>;
   onChange: (block: EditorBlock) => void;
-  onExitList: () => void;
-  onBackspaceEmpty: () => void;
 }) {
-  function setItem(i: number, html: string) {
-    onChange({ ...block, items: block.items.map((item, n) => (n === i ? html : item)) });
-  }
-  function onKey(i: number, e: ReactKey<HTMLDivElement>) {
-    const last = i === block.items.length - 1;
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      if (stripHtml(block.items[i]) === "" && last) {
-        onExitList();
-        return;
-      }
-      const items = block.items.slice();
-      items.splice(i + 1, 0, "");
-      onChange({ ...block, items });
-      focusOn(`${block.id}-${i + 1}`);
-    } else if (e.key === "Backspace" && stripHtml(block.items[i]) === "") {
-      e.preventDefault();
-      if (block.items.length > 1) {
-        onChange({ ...block, items: block.items.filter((_, n) => n !== i) });
-        focusOn(`${block.id}-${Math.max(0, i - 1)}`);
-      } else {
-        onBackspaceEmpty();
-      }
-    }
-  }
-  return (
-    <ul className="a-be-list">
-      {block.items.map((item, i) => (
-        <li key={`${block.id}-${i}`} className="a-be-li">
-          <span className="a-be-mark" aria-hidden="true">{block.type === "numberedList" ? `${i + 1}.` : "•"}</span>
-          <Editable value={item} blockId={`${block.id}-${i}`} focus={focus} placeholder="List item" onChange={(html) => setItem(i, html)} onKeyDown={(e) => onKey(i, e)} />
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function ImageBlock({ block, onChange }: { block: Extract<EditorBlock, { type: "image" }>; onChange: (block: EditorBlock) => void }) {
   return (
     <div className="a-be-card">
       <span className="a-be-kicker">Image</span>
       <ImagePicker url={block.url} onUrl={(url) => onChange({ ...block, url })} />
       <div className="a-be-inline">
-        <input className="a-be-field" value={block.alt} placeholder="Alt text (describe the image)" aria-label="Image alt text" onChange={(e) => onChange({ ...block, alt: e.target.value })} />
-        <input className="a-be-field" value={block.caption} placeholder="Caption (optional)" aria-label="Image caption" onChange={(e) => onChange({ ...block, caption: e.target.value })} />
+        <input
+          className="a-be-field"
+          value={block.alt}
+          placeholder="Alt text (describe the image)"
+          aria-label="Image alt text"
+          onChange={(e) => onChange({ ...block, alt: e.target.value })}
+        />
+        <input
+          className="a-be-field"
+          value={block.caption}
+          placeholder="Caption (optional)"
+          aria-label="Image caption"
+          onChange={(e) => onChange({ ...block, caption: e.target.value })}
+        />
       </div>
     </div>
   );
 }
 
-function GalleryBlock({ block, onChange }: { block: Extract<EditorBlock, { type: "gallery" }>; onChange: (block: EditorBlock) => void }) {
+function GalleryBlock({
+  block,
+  onChange,
+}: {
+  block: Extract<EditorBlock, { type: "gallery" }>;
+  onChange: (block: EditorBlock) => void;
+}) {
   function setImage(i: number, patch: Partial<{ url: string; alt: string }>) {
     onChange({ ...block, images: block.images.map((img, n) => (n === i ? { ...img, ...patch } : img)) });
   }
@@ -1000,15 +1947,27 @@ function GalleryBlock({ block, onChange }: { block: Extract<EditorBlock, { type:
   );
 }
 
-function EmbedBlock({ kind, block, onChange }: { kind: "video" | "audio"; block: Extract<EditorBlock, { type: "video" | "audio" }>; onChange: (block: EditorBlock) => void }) {
+function EmbedBlock({
+  kind,
+  block,
+  onChange,
+}: {
+  kind: "video" | "audio";
+  block: Extract<EditorBlock, { type: "video" | "audio" }>;
+  onChange: (block: EditorBlock) => void;
+}) {
   const video = kind === "video" ? videoEmbedSrc(block.url) : null;
   const audio = kind === "audio" ? audioEmbed(block.url) : null;
   return (
     <div className="a-be-card">
       <span className="a-be-kicker">{kind === "video" ? "Video" : "Audio"}</span>
-      <input className="a-be-field" value={block.url} aria-label={kind === "video" ? "Video URL" : "Audio URL"}
+      <input
+        className="a-be-field"
+        value={block.url}
+        aria-label={kind === "video" ? "Video URL" : "Audio URL"}
         placeholder={kind === "video" ? "YouTube or Vimeo link" : "Spotify, SoundCloud, or an https audio file"}
-        onChange={(e) => onChange({ ...block, url: e.target.value })} />
+        onChange={(e) => onChange({ ...block, url: e.target.value })}
+      />
       <p className="a-be-note">
         {kind === "video"
           ? "Only YouTube and Vimeo links are embedded. Other addresses are ignored."
@@ -1090,7 +2049,7 @@ const URL_ATTRS = ["href", "src", "action", "formaction", "xlink:href", "poster"
 function cleanCss(css: string): string {
   return css
     .replace(/@import[^;]*;?/gi, "")
-    .replace(/expression\s*\([^)]*\)/gi, "")
+    .replace(/expression\s*[)]*/gi, "")
     .replace(/javascript\s*:/gi, "")
     .replace(/behavior\s*:[^;}]*/gi, "")
     .replace(/-moz-binding\s*:[^;}]*/gi, "")
@@ -1114,44 +2073,75 @@ function sanitizeForPreview(input: string): string {
   return headStyles + doc.body.innerHTML;
 }
 
-function HtmlBlock({ block, onChange }: { block: Extract<EditorBlock, { type: "html" }>; onChange: (block: EditorBlock) => void }) {
+function HtmlBlock({
+  block,
+  onChange,
+}: {
+  block: Extract<EditorBlock, { type: "html" }>;
+  onChange: (block: EditorBlock) => void;
+}) {
   const [rendered, setRendered] = useState(block.html);
+  const [showCode, setShowCode] = useState(true);
   const host = useRef<HTMLDivElement>(null);
-  const stale = block.html !== rendered;
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setRendered(block.html), 180);
+    return () => window.clearTimeout(t);
+  }, [block.html]);
 
   useEffect(() => {
     const el = host.current;
     if (!el) return;
     const root = el.shadowRoot ?? el.attachShadow({ mode: "open" });
     root.innerHTML = `<style>:host{display:block;overflow-x:auto;color:inherit;font-family:inherit}</style>${sanitizeForPreview(rendered)}`;
-  }, [rendered]);
+  }, [rendered, showCode]);
 
   return (
     <div className="a-be-card">
       <div className="a-be-card-head">
-        <span className="a-be-kicker">HTML &amp; CSS</span>
-        <button type="button" className="a-be-convert" onClick={() => setRendered(block.html)} disabled={!block.html.trim()}>
-          Convert
-        </button>
+        <span className="a-be-kicker">Custom HTML &amp; CSS</span>
+        <div className="a-be-chips">
+          <button
+            type="button"
+            className="a-be-chip"
+            onClick={() => setShowCode((v) => !v)}
+          >
+            {showCode ? "Hide code" : "Edit code"}
+          </button>
+          <button
+            type="button"
+            className="a-be-convert"
+            onClick={() => setRendered(block.html)}
+            disabled={!block.html.trim()}
+          >
+            Refresh preview
+          </button>
+        </div>
       </div>
-      <AutoArea
-        className="a-be-area"
-        value={block.html}
-        spellCheck={false}
-        aria-label="HTML and CSS code"
-        placeholder={"<style>\n  table { border-collapse: collapse; }\n  td, th { border: 1px solid #ccc; padding: 6px 10px; }\n</style>\n<table>\n  <tr><th>Town</th><th>Inches</th></tr>\n  <tr><td>Denver</td><td>8</td></tr>\n</table>"}
-        onChange={(html) => onChange({ ...block, html })}
-        onKeyDown={(e) => {
-          if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); setRendered(block.html); }
-        }}
-      />
-      {stale && block.html.trim() && <p className="a-be-note">Code changed. Press Convert (or Ctrl/Cmd + Enter) to update the preview.</p>}
+      {showCode && (
+        <AutoArea
+          className="a-be-area"
+          value={block.html}
+          spellCheck={false}
+          aria-label="HTML and CSS code"
+          placeholder={"<style>\n  table { border-collapse: collapse; width: 100%; }\n  td, th { border: 1px solid #ccc; padding: 8px 12px; }\n</style>\n<table>\n  <tr><th>Town</th><th>Inches</th></tr>\n  <tr><td>Denver</td><td>8</td></tr>\n</table>"}
+          onChange={(html) => onChange({ ...block, html })}
+        />
+      )}
       {rendered.trim() && <div ref={host} className="a-be-html-out" />}
     </div>
   );
 }
 
-function MarkdownBlock({ block, theme, onChange }: { block: Extract<EditorBlock, { type: "markdown" }>; theme: "light" | "dark"; onChange: (block: EditorBlock) => void }) {
+function MarkdownBlock({
+  block,
+  theme,
+  onChange,
+}: {
+  block: Extract<EditorBlock, { type: "markdown" }>;
+  theme: "light" | "dark";
+  onChange: (block: EditorBlock) => void;
+}) {
   const [mode, setMode] = useState<"edit" | "preview">("edit");
   return (
     <div className="a-be-card">
@@ -1160,7 +2150,14 @@ function MarkdownBlock({ block, theme, onChange }: { block: Extract<EditorBlock,
         <ModeTabs mode={mode} setMode={setMode} />
       </div>
       {mode === "edit" ? (
-        <AutoArea className="a-be-area" value={block.markdown} spellCheck aria-label="Markdown source" placeholder={"## A smaller heading\n\nA paragraph with **bold**.\n\n- One\n- Two"} onChange={(markdown) => onChange({ ...block, markdown })} />
+        <AutoArea
+          className="a-be-area"
+          value={block.markdown}
+          spellCheck
+          aria-label="Markdown source"
+          placeholder={"## A smaller heading\n\nA paragraph with **bold**.\n\n- One\n- Two"}
+          onChange={(markdown) => onChange({ ...block, markdown })}
+        />
       ) : (
         <AutoFrame title="Markdown preview" srcDoc={htmlDocument(markdownToHtml(block.markdown), theme)} />
       )}
@@ -1168,7 +2165,13 @@ function MarkdownBlock({ block, theme, onChange }: { block: Extract<EditorBlock,
   );
 }
 
-function TableBlock({ block, onChange }: { block: Extract<EditorBlock, { type: "table" }>; onChange: (block: EditorBlock) => void }) {
+function TableBlock({
+  block,
+  onChange,
+}: {
+  block: Extract<EditorBlock, { type: "table" }>;
+  onChange: (block: EditorBlock) => void;
+}) {
   const cols = Math.max(1, ...block.rows.map((row) => row.length));
   function setCell(r: number, c: number, value: string) {
     onChange({ ...block, rows: block.rows.map((row, ri) => ri === r ? row.map((cell, ci) => (ci === c ? value : cell)) : row) });
@@ -1217,7 +2220,13 @@ function TableBlock({ block, onChange }: { block: Extract<EditorBlock, { type: "
   );
 }
 
-function ButtonBlock({ block, onChange }: { block: Extract<EditorBlock, { type: "button" }>; onChange: (block: EditorBlock) => void }) {
+function ButtonBlock({
+  block,
+  onChange,
+}: {
+  block: Extract<EditorBlock, { type: "button" }>;
+  onChange: (block: EditorBlock) => void;
+}) {
   return (
     <div className="a-be-card">
       <span className="a-be-kicker">Button</span>
@@ -1230,14 +2239,27 @@ function ButtonBlock({ block, onChange }: { block: Extract<EditorBlock, { type: 
   );
 }
 
-function CodeBlock({ block, onChange }: { block: Extract<EditorBlock, { type: "code" }>; onChange: (block: EditorBlock) => void }) {
+function CodeBlock({
+  block,
+  onChange,
+}: {
+  block: Extract<EditorBlock, { type: "code" }>;
+  onChange: (block: EditorBlock) => void;
+}) {
   return (
     <div className="a-be-card">
       <div className="a-be-card-head">
         <span className="a-be-kicker">Code</span>
         <input className="a-be-field a-be-lang" value={block.language} placeholder="Language" aria-label="Code language" onChange={(e) => onChange({ ...block, language: e.target.value })} />
       </div>
-      <AutoArea className="a-be-area" value={block.code} spellCheck={false} aria-label="Code" placeholder="Paste code" onChange={(code) => onChange({ ...block, code })} />
+      <AutoArea
+        className="a-be-area"
+        value={block.code}
+        spellCheck={false}
+        aria-label="Code"
+        placeholder="Paste code"
+        onChange={(code) => onChange({ ...block, code })}
+      />
     </div>
   );
 }
