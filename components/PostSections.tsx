@@ -1,5 +1,6 @@
 import type { PostSection } from "@/content/posts";
 import BlockView from "@/components/BlockView";
+import { RichParagraphs } from "@/components/InlineText";
 import { sectionToViewBlock, type LooseSection } from "@/lib/admin/blocks";
 
 /**
@@ -23,7 +24,7 @@ export default function PostSections({ sections }: { sections: PostSection[] }) 
         return (
           <section key={i}>
             {s.heading && <h2 style={{ fontSize: "1.6rem" }}>{s.heading}</h2>}
-            {s.paragraphs?.map((p, j) => <p key={j}>{p}</p>)}
+            {s.paragraphs?.map((p, j) => <RichParagraphs key={j} text={p} />)}
             {s.list && (
               <ul>
                 {s.list.map((li, j) => <li key={j}>{li}</li>)}
