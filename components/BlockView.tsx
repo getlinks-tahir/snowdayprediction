@@ -8,7 +8,24 @@ import {
   videoEmbedSrc,
   type ContentBlock,
 } from "@/lib/admin/blocks";
+function sanitizeInlineHtml(input: string): string {
+  return input
+    .replace(/<\s*(script|style|iframe|object|embed|svg|math)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, "")
+    .replace(/<\s*(script|style|iframe|object|embed|svg|math)\b[^>]*\/?>/gi, "")
+    .replace(/\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+    .replace(/\s+(href|src)\s*=\s*("[^"]*(?:javascript|data|vbscript):[^"]*"|'[^']*(?:javascript|data|vbscript):[^']*'|(?:javascript|data|vbscript):[^\s>]*)/gi, "")
+    .replace(/<(?!\/?(?:b|strong|i|em|u|s|code|br|a)\b)[^>]*>/gi, "");
+}
 
+function InlineText({ text }: { text: string }) {
+  return (
+    <span
+      dangerouslySetInnerHTML={{
+        __html: sanitizeInlineHtml(text),
+      }}
+    />
+  );
+}
 /**
  * Public rendering for one content block.
  * Legacy posts never reach this component. HTML is sandboxed and cannot run JavaScript.
@@ -26,8 +43,8 @@ export default function BlockView({ block, theme = "auto" }: { block: ContentBlo
     <div style={{ marginBottom: "1rem" }}>
       {paragraphs.map((text, i) => (
         <p key={i} style={{ margin: "0 0 1rem" }}>
-          {text}
-        </p>
+  <InlineText text={text} />
+</p>
       ))}
     </div>
   );
@@ -35,24 +52,34 @@ export default function BlockView({ block, theme = "auto" }: { block: ContentBlo
     case "heading": {
       const Tag = block.level === 1 ? "h1" : block.level === 3 ? "h3" : "h2";
       const size = block.level === 1 ? "2rem" : block.level === 3 ? "1.25rem" : "1.6rem";
-      return <Tag style={{ fontSize: size, lineHeight: 1.25, margin: "1.4rem 0 0.7rem" }}>{block.text}</Tag>;
+      return (
+  <Tag style={{ fontSize: size, lineHeight: 1.25, margin: "1.4rem 0 0.7rem" }}>
+    <InlineText text={block.text} />
+  </Tag>
+);
     }
     case "bulletList":
       return (
         <ul style={{ margin: "0 0 1rem", paddingLeft: "1.25rem" }}>
-          {block.items.filter(Boolean).map((item, i) => <li key={i} style={{ margin: "0.25rem 0" }}>{item}</li>)}
+          {block.items.filter(Boolean).map((item, i) => <li key={i} style={{ margin: "0.25rem 0" }}>
+  <InlineText text={item} />
+</li>)}
         </ul>
       );
     case "numberedList":
       return (
         <ol style={{ margin: "0 0 1rem", paddingLeft: "1.25rem" }}>
-          {block.items.filter(Boolean).map((item, i) => <li key={i} style={{ margin: "0.25rem 0" }}>{item}</li>)}
+          {block.items.filter(Boolean).map((item, i) => <li key={i} style={{ margin: "0.25rem 0" }}>
+  <InlineText text={item} />
+</li>)}
         </ol>
       );
     case "quote":
       return (
         <blockquote style={{ margin: "0 0 1rem", padding: "0.2rem 0 0.2rem 1rem", borderLeft: "3px solid currentColor", opacity: 0.9 }}>
-          <p style={{ margin: 0 }}>{block.text}</p>
+          <p style={{ margin: 0 }}>
+  <InlineText text={block.text} />
+</p>
         </blockquote>
       );
     case "divider":
@@ -126,12 +153,16 @@ export default function BlockView({ block, theme = "auto" }: { block: ContentBlo
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             {block.hasHeader && first ? (
               <thead>
-                <tr>{first.map((cell, i) => <th key={i} style={{ border: "1px solid color-mix(in srgb, currentColor 28%, transparent)", padding: "8px 10px", textAlign: "left" }}>{cell}</th>)}</tr>
+                <tr>{first.map((cell, i) => <th key={i} style={{ border: "1px solid color-mix(in srgb, currentColor 28%, transparent)", padding: "8px 10px", textAlign: "left" }}>
+  <InlineText text={cell} />
+</th>)}</tr>
               </thead>
             ) : null}
             <tbody>
               {body.map((row, r) => (
-                <tr key={r}>{row.map((cell, c) => <td key={c} style={{ border: "1px solid color-mix(in srgb, currentColor 28%, transparent)", padding: "8px 10px", verticalAlign: "top" }}>{cell}</td>)}</tr>
+                <tr key={r}>{row.map((cell, c) => <td key={c} style={{ border: "1px solid color-mix(in srgb, currentColor 28%, transparent)", padding: "8px 10px", verticalAlign: "top" }}>
+  <InlineText text={cell} />
+</td>)}</tr>
               ))}
             </tbody>
           </table>
@@ -150,7 +181,9 @@ export default function BlockView({ block, theme = "auto" }: { block: ContentBlo
     case "callout":
       return (
         <div className="callout">
-          <p>{block.text}</p>
+          <p>
+  <InlineText text={block.text} />
+</p>
         </div>
       );
     case "code":
