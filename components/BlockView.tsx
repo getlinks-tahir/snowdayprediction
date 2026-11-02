@@ -32,20 +32,17 @@ function InlineText({ text }: { text: string }) {
  */
 export default function BlockView({ block, theme = "auto" }: { block: ContentBlock; theme?: "auto" | "light" | "dark" }) {
   switch (block.type) {
-    case "paragraph": {
-  const paragraphs = block.text
-    .replace(/\r\n?/g, "\n")
-    .split(/\n[ \t]*\n+/)
-    .map((text) => text.trim())
-    .filter(Boolean);
-
+    case "paragraph":
   return (
-    <div style={{ marginBottom: "1rem" }}>
-      {paragraphs.map((text, i) => (
-        <p key={i} style={{ margin: "0 0 1rem" }}>
-  <InlineText text={text} />
-</p>
-      ))}
+    <div key={block.id} className="blog-paragraph">
+      {block.text
+        .split(/\n\s*\n/)
+        .filter((text) => text.trim())
+        .map((text, index) => (
+          <p key={index}>
+            <InlineText text={text} />
+          </p>
+        ))}
     </div>
   );
 }
