@@ -1,9 +1,7 @@
 "use client";
 
 import React, {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useId,
   useMemo,
@@ -15,10 +13,40 @@ import React, {
   type KeyboardEvent as ReactKey,
   type ReactNode,
 } from "react";
+import PostSections from "@/components/PostSections";
+import { checkSlugAvailable, savePost } from "@/lib/admin/actions";
+import {
+  audioEmbed,
+  blockToSectionInput,
+  countWords,
+  createBlock,
+  htmlDocument,
+  isSafeMediaUrl,
+  markdownToHtml,
+  sectionsToEditorBlocks,
+  toPostSection,
+  videoEmbedSrc,
+  type ContentBlock,
+  type EditorBlock,
+  type HeadingLevel,
+} from "@/lib/admin/blocks";
+import type { PostInput, SaveMode, SectionInput } from "@/lib/admin/schema";
+import type { PostSection } from "@/lib/admin/types";
+import { uploadBlogImage } from "@/lib/admin/upload-actions";
+import {
+  estimateReadMinutes,
+  formatPostDate,
+  isValidDate,
+  isValidImage,
+  SITE_NAME,
+  SITE_URL,
+  SLUG_RE,
+  slugify,
+  todayISO,
+} from "@/lib/admin/validators";
 
 /* ==========================================================================
-   EMBEDDED STYLES (admin.css + block-editor.css — Blogger / WordPress /
-   Google Docs Continuous Writing Studio)
+   EMBEDDED STYLES (Blogger / WordPress / Google Docs Continuous Studio)
    ========================================================================== */
 const EDITOR_CSS = `
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap");
@@ -214,7 +242,7 @@ const EDITOR_CSS = `
   scrollbar-width: thin;
 }
 
-/* ---------- The Writing Sheet (Blogger / WordPress / Google Docs Page) ---------- */
+/* ---------- The Writing Sheet ---------- */
 .a-editor .a-sheet {
   width: 100%;
   max-width: 980px;
@@ -238,7 +266,6 @@ const EDITOR_CSS = `
   padding: 32px 72px 12px;
 }
 
-/* Cover toggle area inside sheet */
 .a-cover-wrap {
   padding: 20px 56px 0;
 }
@@ -256,7 +283,7 @@ const EDITOR_CSS = `
   padding: 18px 72px 0;
 }
 
-/* ---------- Sticky Top Blogger / WordPress Toolbar ---------- */
+/* ---------- Sticky Top Formatting Toolbar ---------- */
 .a-be-toolbar {
   position: sticky;
   top: calc(var(--be-top) + 58px);
@@ -376,7 +403,6 @@ const EDITOR_CSS = `
   display: block;
 }
 
-/* Typography inside the continuous writing surface */
 .a-be-flow p,
 .a-be-flow div:not([data-callout]) {
   margin: 0 0 1.05em;
@@ -449,7 +475,6 @@ const EDITOR_CSS = `
   margin: 26px 0;
 }
 
-/* Inline Elements inside the continuous writing surface */
 .a-be-flow b, .a-be-flow strong { font-weight: 700; }
 .a-be-flow i, .a-be-flow em { font-style: italic; }
 .a-be-flow u { text-decoration: underline; text-underline-offset: 3px; }
@@ -473,7 +498,7 @@ const EDITOR_CSS = `
   color: color-mix(in srgb, var(--be-primary) 80%, var(--be-text));
 }
 
-/* ---------- Embedded Media / HTML / Table Widgets Inside the Document ---------- */
+/* ---------- Embedded Media / HTML / Table Widgets ---------- */
 .a-be-widget {
   position: relative;
   margin: 14px 0;
@@ -592,7 +617,7 @@ const EDITOR_CSS = `
 }
 .a-be-title::placeholder { color: var(--be-faint); font-weight: 600; }
 
-/* ---------- Image Picker (Shared) ---------- */
+/* ---------- Image Picker ---------- */
 .a-be-pick { display: grid; gap: 8px; }
 .a-be-drop {
   position: relative;
@@ -837,62 +862,6 @@ const EDITOR_CSS = `
 }
 `;
 
-/* ==========================================================================
-   TYPES & VALIDATORS
-   ========================================================================== */
-export type HeadingLevel = 1 | 2 | 3;
-
-export type ContentBlock =
-  | { type: "paragraph"; text: string }
-  | { type: "heading"; level: HeadingLevel; text: string }
-  | { type: "bulletList"; items: string[] }
-  | { type: "numberedList"; items: string[] }
-  | { type: "quote"; text: string }
-  | { type: "callout"; text: string }
-  | { type: "divider" }
-  | { type: "image"; url: string; alt: string; caption: string }
-  | { type: "gallery"; images: { url: string; alt: string }[] }
-  | { type: "video"; url: string }
-  | { type: "audio"; url: string }
-  | { type: "html"; html: string }
-  | { type: "markdown"; markdown: string }
-  | { type: "table"; hasHeader: boolean; rows: string[][] }
-  | { type: "button"; label: string; href: string }
-  | { type: "code"; language: string; code: string };
-
-export type EditorBlock = ContentBlock & { id: string };
-
-export interface PostSection {
-  heading?: string;
-  paragraphs?: string[];
-  list?: string[];
-  callout?: string;
-  blocks?: ContentBlock[];
-}
-
-export interface SectionInput {
-  heading: string;
-  paragraphs: string[];
-  list: string[];
-  callout: string;
-}
-
-export type SaveMode = "save" | "publish" | "unpublish";
-
-export interface PostInput {
-  id?: number;
-  title: string;
-  slug: string;
-  description: string;
-  date: string;
-  updated: string;
-  readMinutes: number;
-  image: string;
-  imageAlt: string;
-  tags: string[];
-  sections: SectionInput[];
-}
-
 export interface EditorInitial {
   id: number;
   title: string;
@@ -908,82 +877,7 @@ export interface EditorInitial {
   published: boolean;
 }
 
-const SITE_NAME = "Snow Day Calculator";
-const SITE_URL = "https://snowdaycalculator.com";
-const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const UNSAVED_MESSAGE = "You have unsaved changes. Are you sure you want to leave?";
-
-let _dirtyFlag = false;
-function setDirtyFlag(v: boolean) {
-  _dirtyFlag = v;
-}
-
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function slugify(input: string): string {
-  return input
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 100);
-}
-
-function isValidDate(d: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(d);
-}
-
-function isValidImage(url: string): boolean {
-  return /^(\/|https?:\/\/|blob:|data:image\/)/i.test(url.trim());
-}
-
-function isSafeMediaUrl(url: string): boolean {
-  const t = url.trim();
-  return Boolean(t) && /^(\/|https?:\/\/|blob:|data:image\/)/i.test(t);
-}
-
-function formatPostDate(date: string): string {
-  if (!isValidDate(date)) return "Unscheduled";
-  try {
-    return new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", {
-      month: "long",
-      day: "numeric",
-      year: "numeric",
-      timeZone: "UTC",
-    });
-  } catch {
-    return date;
-  }
-}
-
-let _blockSeq = 1;
-function nextBlockId(): string {
-  return `blk-${Date.now().toString(36)}-${(_blockSeq++).toString(36)}`;
-}
-
-export function createBlock(type: ContentBlock["type"], level: HeadingLevel = 2): EditorBlock {
-  const id = nextBlockId();
-  switch (type) {
-    case "paragraph": return { id, type: "paragraph", text: "" };
-    case "heading": return { id, type: "heading", level, text: "" };
-    case "bulletList": return { id, type: "bulletList", items: [""] };
-    case "numberedList": return { id, type: "numberedList", items: [""] };
-    case "quote": return { id, type: "quote", text: "" };
-    case "callout": return { id, type: "callout", text: "" };
-    case "divider": return { id, type: "divider" };
-    case "image": return { id, type: "image", url: "", alt: "", caption: "" };
-    case "gallery": return { id, type: "gallery", images: [{ url: "", alt: "" }] };
-    case "video": return { id, type: "video", url: "" };
-    case "audio": return { id, type: "audio", url: "" };
-    case "html": return { id, type: "html", html: "" };
-    case "markdown": return { id, type: "markdown", markdown: "" };
-    case "table": return { id, type: "table", hasHeader: true, rows: [["Town", "Snowfall"], ["Denver", "8 in"]] };
-    case "button": return { id, type: "button", label: "Check snow day chance", href: "/#calculator" };
-    case "code": return { id, type: "code", language: "html", code: "" };
-  }
-}
 
 function stripHtml(html: string): string {
   if (!html) return "";
@@ -999,190 +893,6 @@ function stripHtml(html: string): string {
     .trim();
 }
 
-function countWords(blocks: EditorBlock[]): number {
-  let text = "";
-  for (const b of blocks) {
-    if ("text" in b) text += " " + stripHtml(b.text);
-    else if ("items" in b) text += " " + b.items.map(stripHtml).join(" ");
-    else if (b.type === "table") text += " " + b.rows.flat().join(" ");
-    else if (b.type === "markdown") text += " " + b.markdown;
-  }
-  const words = text.trim().split(/\s+/).filter(Boolean);
-  return text.trim() ? words.length : 0;
-}
-
-function estimateReadMinutes(sections: PostSection[]): number {
-  let words = 0;
-  for (const s of sections) {
-    if (s.heading) words += stripHtml(s.heading).split(/\s+/).filter(Boolean).length;
-    for (const p of s.paragraphs ?? []) words += stripHtml(p).split(/\s+/).filter(Boolean).length;
-    for (const l of s.list ?? []) words += stripHtml(l).split(/\s+/).filter(Boolean).length;
-    if (s.callout) words += stripHtml(s.callout).split(/\s+/).filter(Boolean).length;
-  }
-  return Math.max(1, Math.ceil(words / 200));
-}
-
-function sectionsToBlocks(sections?: PostSection[]): EditorBlock[] {
-  if (!sections || !sections.length) return [createBlock("paragraph")];
-  const out: EditorBlock[] = [];
-  for (const s of sections) {
-    if (s.heading?.trim()) {
-      out.push({ id: nextBlockId(), type: "heading", level: 2, text: s.heading.trim() });
-    }
-    for (const p of s.paragraphs ?? []) {
-      if (p.trim()) out.push({ id: nextBlockId(), type: "paragraph", text: p.trim() });
-    }
-    if (s.list?.length) {
-      out.push({ id: nextBlockId(), type: "bulletList", items: s.list });
-    }
-    if (s.callout?.trim()) {
-      out.push({ id: nextBlockId(), type: "callout", text: s.callout.trim() });
-    }
-  }
-  return out.length ? out : [createBlock("paragraph")];
-}
-
-function blocksToSectionInputs(blocks: EditorBlock[]): SectionInput[] {
-  const sections: SectionInput[] = [];
-  let current: SectionInput = { heading: "", paragraphs: [], list: [], callout: "" };
-
-  const pushCurrent = () => {
-    if (
-      current.heading.trim() ||
-      current.paragraphs.length > 0 ||
-      current.list.length > 0 ||
-      current.callout.trim()
-    ) {
-      sections.push(current);
-      current = { heading: "", paragraphs: [], list: [], callout: "" };
-    }
-  };
-
-  for (const b of blocks) {
-    switch (b.type) {
-      case "heading":
-        if (stripHtml(b.text)) {
-          pushCurrent();
-          current.heading = sanitizeInlineHtml(b.text);
-        }
-        break;
-      case "paragraph":
-      case "quote":
-        if (stripHtml(b.text)) {
-          if (current.list.length > 0 || current.callout.trim()) pushCurrent();
-          current.paragraphs.push(sanitizeInlineHtml(b.text));
-        }
-        break;
-      case "bulletList":
-      case "numberedList": {
-        const cleanItems = b.items.map(sanitizeInlineHtml).filter((item) => stripHtml(item));
-        if (cleanItems.length) {
-          if (current.list.length > 0 || current.callout.trim()) pushCurrent();
-          current.list.push(...cleanItems);
-        }
-        break;
-      }
-      case "callout":
-        if (stripHtml(b.text)) {
-          if (current.callout.trim()) pushCurrent();
-          current.callout = sanitizeInlineHtml(b.text);
-          pushCurrent();
-        }
-        break;
-      case "html":
-        if (b.html.trim()) {
-          pushCurrent();
-          current.paragraphs.push(b.html.trim());
-          pushCurrent();
-        }
-        break;
-      case "table": {
-        const tableHtml = `<div style="overflow-x:auto"><table><tbody>${b.rows
-          .map(
-            (row, rIdx) =>
-              `<tr>${row
-                .map((cell) =>
-                  b.hasHeader && rIdx === 0
-                    ? `<th>${escapeHtml(cell)}</th>`
-                    : `<td>${escapeHtml(cell)}</td>`
-                )
-                .join("")}</tr>`
-          )
-          .join("")}</tbody></table></div>`;
-        pushCurrent();
-        current.paragraphs.push(tableHtml);
-        pushCurrent();
-        break;
-      }
-      case "image":
-        if (b.url.trim()) {
-          pushCurrent();
-          current.paragraphs.push(
-            `<figure><img src="${escapeHtml(b.url.trim())}" alt="${escapeHtml(b.alt)}" />${
-              b.caption.trim() ? `<figcaption>${escapeHtml(b.caption.trim())}</figcaption>` : ""
-            }</figure>`
-          );
-          pushCurrent();
-        }
-        break;
-      default:
-        break;
-    }
-  }
-  pushCurrent();
-  return sections;
-}
-
-function toPostSection(s: SectionInput): PostSection {
-  const out: PostSection = {};
-  if (s.heading.trim()) out.heading = s.heading.trim();
-  if (s.paragraphs.length) out.paragraphs = s.paragraphs;
-  if (s.list.length) out.list = s.list;
-  if (s.callout.trim()) out.callout = s.callout.trim();
-  return out;
-}
-
-function videoEmbedSrc(url: string): string | null {
-  const u = url.trim();
-  const yt = /(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{6,})/.exec(u);
-  if (yt) return `https://www.youtube.com/embed/${yt[1]}`;
-  const vm = /vimeo\.com\/(\d+)/.exec(u);
-  if (vm) return `https://player.vimeo.com/video/${vm[1]}`;
-  return null;
-}
-
-function audioEmbed(url: string): { kind: "file" | "spotify" | "soundcloud"; src: string } | null {
-  const u = url.trim();
-  if (!/^https?:\/\//i.test(u)) return null;
-  if (/\.(mp3|wav|ogg|m4a)(\?|$)/i.test(u)) return { kind: "file", src: u };
-  if (u.includes("open.spotify.com/")) {
-    return { kind: "spotify", src: u.replace("open.spotify.com/", "open.spotify.com/embed/") };
-  }
-  return null;
-}
-
-function markdownToHtml(md: string): string {
-  return md
-    .split(/\n{2,}/)
-    .map((chunk) => {
-      const t = chunk.trim();
-      if (t.startsWith("### ")) return `<h3>${inlineMarkdownToHtml(t.slice(4))}</h3>`;
-      if (t.startsWith("## ")) return `<h2>${inlineMarkdownToHtml(t.slice(3))}</h2>`;
-      if (t.startsWith("# ")) return `<h1>${inlineMarkdownToHtml(t.slice(2))}</h1>`;
-      return `<p>${inlineMarkdownToHtml(t)}</p>`;
-    })
-    .join("");
-}
-
-function htmlDocument(body: string, theme: "light" | "dark"): string {
-  const fg = theme === "dark" ? "#e9ecf2" : "#141821";
-  const bg = theme === "dark" ? "#12161f" : "#ffffff";
-  return `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:12px;font-family:system-ui,sans-serif;color:${fg};background:${bg};line-height:1.6}</style></head><body>${body}</body></html>`;
-}
-
-/* ==========================================================================
-   CLEAN INLINE HTML SANITIZER & SMART PASTE PARSER
-   ========================================================================== */
 function escapeHtml(raw: string): string {
   return raw
     .replace(/&/g, "&amp;")
@@ -1225,7 +935,7 @@ export function sanitizeInlineHtml(dirtyHtml: string): string {
     const el = node as HTMLElement;
     const tag = el.tagName.toLowerCase();
 
-    if (tag === "br") return "";
+    if (tag === "br") return "<br>";
     if (tag === "script" || tag === "style" || tag === "meta" || tag === "link") return "";
 
     const styleAttr = (el.getAttribute("style") ?? "").toLowerCase();
@@ -1271,6 +981,7 @@ export function sanitizeInlineHtml(dirtyHtml: string): string {
   return Array.from(root.childNodes)
     .map(serializeNode)
     .join("")
+    .replace(/^(<br\s*\/?>\s*)+|(\s*<br\s*\/?>)+$/gi, "")
     .trim();
 }
 
@@ -1723,6 +1434,23 @@ function cleanPastedContentToHtml(htmlData: string, plainData: string): string {
   return outParts.join("");
 }
 
+function blocksToSectionInputs(blocks: EditorBlock[]): SectionInput[] {
+  return blocks
+    .map((b) => {
+      if (b.type === "paragraph" || b.type === "heading" || b.type === "quote" || b.type === "callout") {
+        return blockToSectionInput({ ...b, text: sanitizeInlineHtml(b.text) });
+      }
+      if (b.type === "bulletList" || b.type === "numberedList") {
+        return blockToSectionInput({
+          ...b,
+          items: b.items.map((item) => sanitizeInlineHtml(item)).filter((item) => stripHtml(item) !== ""),
+        });
+      }
+      return blockToSectionInput(b);
+    })
+    .filter((s): s is SectionInput => s !== null);
+}
+
 /* ==========================================================================
    ICONS & HELPER UI COMPONENTS
    ========================================================================== */
@@ -1930,44 +1658,11 @@ function ConfirmDialog({
   );
 }
 
-function PostSections({ sections }: { sections: PostSection[] }) {
-  return (
-    <div>
-      {sections.map((s, idx) => (
-        <section key={idx} style={{ marginBottom: 24 }}>
-          {s.heading && <h2 dangerouslySetInnerHTML={{ __html: s.heading }} />}
-          {(s.paragraphs ?? []).map((p, pIdx) =>
-            /^<(div|table|figure)/i.test(p.trim()) ? (
-              <div key={pIdx} dangerouslySetInnerHTML={{ __html: p }} />
-            ) : (
-              <p key={pIdx} dangerouslySetInnerHTML={{ __html: p }} />
-            )
-          )}
-          {s.list && s.list.length > 0 && (
-            <ul>
-              {s.list.map((item, lIdx) => (
-                <li key={lIdx} dangerouslySetInnerHTML={{ __html: item }} />
-              ))}
-            </ul>
-          )}
-          {s.callout && (
-            <div className="callout">
-              <p dangerouslySetInnerHTML={{ __html: s.callout }} />
-            </div>
-          )}
-        </section>
-      ))}
-    </div>
-  );
-}
-
 type ToastKind = "success" | "error" | "info";
 interface ToastItem { id: number; message: string; kind: ToastKind }
-const ToastCtx = createContext<{ push: (m: string, k?: ToastKind) => void }>({ push: () => {} });
-const useToast = () => useContext(ToastCtx);
 
 /* ==========================================================================
-   IMAGE STANDARDIZER & IMAGE PICKER
+   IMAGE STANDARDIZER & SUPABASE UPLOAD IMAGE PICKER
    ========================================================================== */
 export const IMAGE_WIDTH = 1600;
 export const IMAGE_HEIGHT = 900;
@@ -2044,8 +1739,14 @@ export function ImagePicker({
     setUploading(true);
     try {
       const prepared = await standardizeImage(file);
-      const localUrl = URL.createObjectURL(prepared);
-      onUrlRef.current(localUrl);
+      const fd = new FormData();
+      fd.set("file", prepared);
+      const res = await uploadBlogImage(fd);
+      if (!res.ok) {
+        fail(res.message);
+        return;
+      }
+      onUrlRef.current(res.url);
       onUploaded?.();
     } catch {
       fail("Upload failed. Please try again.");
@@ -3187,7 +2888,7 @@ function TableWidget({
 }
 
 /* ==========================================================================
-   POST EDITOR (MAIN EXPORTED COMPONENT)
+   POST EDITOR (DEFAULT & NAMED EXPORT)
    ========================================================================== */
 type SlugState = "idle" | "checking" | "free" | "taken" | "invalid";
 
@@ -3198,7 +2899,22 @@ export function PostEditor({
   initial?: EditorInitial | null;
   tagSuggestions?: string[];
 }) {
-  const toast = useToast();
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const nextToastId = useRef(1);
+
+  const dismissToast = useCallback((toastId: number) => {
+    setToasts((list) => list.filter((t) => t.id !== toastId));
+  }, []);
+
+  const pushToast = useCallback(
+    (message: string, kind: ToastKind = "info") => {
+      const toastId = nextToastId.current++;
+      setToasts((list) => [...list.slice(-3), { id: toastId, message, kind }]);
+      window.setTimeout(() => dismissToast(toastId), kind === "error" ? 6000 : 3500);
+    },
+    [dismissToast]
+  );
+
   const [pending, startTransition] = useTransition();
   const isNew = initial === null;
   const imageRef = useRef<HTMLInputElement>(null);
@@ -3222,7 +2938,7 @@ export function PostEditor({
   const [showCoverPicker, setShowCoverPicker] = useState(Boolean(initial?.image));
 
   const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
-  const [blocks, setBlocks] = useState<EditorBlock[]>(() => sectionsToBlocks(initial?.sections));
+  const [blocks, setBlocks] = useState<EditorBlock[]>(() => sectionsToEditorBlocks(initial?.sections ?? []));
 
   const [view, setView] = useState<"edit" | "preview">("edit");
   const [issues, setIssues] = useState<string[]>([]);
@@ -3255,7 +2971,7 @@ export function PostEditor({
     () => sectionInputs.map(toPostSection).filter((s) => Object.keys(s).length > 0),
     [sectionInputs]
   );
-  const readMinutes = autoRead ? estimateReadMinutes(previewSections as PostSection[]) : Number.parseInt(readText, 10) || 0;
+  const readMinutes = autoRead ? estimateReadMinutes(previewSections) : Number.parseInt(readText, 10) || 0;
 
   const snapshot = useMemo(
     () => JSON.stringify({ title, slug, description, date, updated, readMinutes, image, imageAlt, tags, sections: sectionInputs }),
@@ -3265,7 +2981,6 @@ export function PostEditor({
   const dirty = snapshot !== savedSnapshot;
 
   useEffect(() => {
-    setDirtyFlag(dirty);
     if (!dirty) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = UNSAVED_MESSAGE; };
     window.addEventListener("beforeunload", onBeforeUnload);
@@ -3275,9 +2990,24 @@ export function PostEditor({
   useEffect(() => {
     if (!slug) { setSlugState("idle"); return; }
     if (!SLUG_RE.test(slug)) { setSlugState("invalid"); return; }
-    if (initial && slug === initial.slug) { setSlugState("idle"); return; }
-    setSlugState("free");
-  }, [slug, initial]);
+    if (initial && slug === initial.slug && id === initial.id) { setSlugState("idle"); return; }
+    let cancelled = false;
+    setSlugState("checking");
+    const timer = window.setTimeout(async () => {
+      try {
+        const res = await checkSlugAvailable(slug, id);
+        if (cancelled) return;
+        if (!res.valid) setSlugState("invalid");
+        else setSlugState(res.available ? "free" : "taken");
+      } catch {
+        if (!cancelled) setSlugState("idle");
+      }
+    }, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [slug, id, initial]);
 
   useEffect(() => { setImageBroken(false); }, [image]);
 
@@ -3294,38 +3024,55 @@ export function PostEditor({
     setFieldErrors({});
     const snapAtSave = snapshot;
 
+    const payload: PostInput = {
+      id,
+      title,
+      slug,
+      description,
+      date,
+      updated,
+      readMinutes,
+      image,
+      imageAlt,
+      tags,
+      sections: sectionInputs,
+    };
+
     startTransition(async () => {
-      if (mode === "publish") {
-        const errs: Record<string, string> = {};
-        const list: string[] = [];
-        if (!title.trim()) { errs.title = "Title is required."; list.push("Add a post title."); }
-        if (!SLUG_RE.test(slug)) { errs.slug = "Valid URL slug is required."; list.push("Enter a valid URL slug."); }
-        if (previewSections.length === 0) { errs.sections = "Write some post content before publishing."; list.push("Add post content."); }
-        if (list.length > 0) {
-          setIssues(list);
-          setFieldErrors(errs);
-          toast.push("Please fix the highlighted fields before publishing.", "error");
+      try {
+        const res = await savePost(payload, mode);
+        if (!res.ok) {
+          setIssues(res.issues ?? [res.message]);
+          setFieldErrors(res.fieldErrors ?? {});
+          pushToast(res.message || "Could not save the post.", "error");
           return;
         }
-      }
 
-      setSavedSnapshot(snapAtSave);
-      setDirtyFlag(false);
-      const nextPub = mode === "publish" ? true : mode === "unpublish" ? false : published;
-      setPublishedState(nextPub);
-      setSlugUnlocked(!nextPub);
-      setConfirmUnpublish(false);
-      if (id === undefined) setId(1);
-      toast.push(
-        mode === "publish"
-          ? "Published. The post is live."
-          : mode === "unpublish"
-          ? "Unpublished. The post is now a draft."
-          : nextPub
-          ? "Changes saved. They are live."
-          : "Draft saved.",
-        "success"
-      );
+        const wasNew = id === undefined;
+        setId(res.id);
+        setSlug(res.slug);
+        setPublishedState(res.published);
+        setSlugUnlocked(!res.published);
+        setConfirmUnpublish(false);
+        setSavedSnapshot(snapAtSave);
+
+        if (wasNew && typeof window !== "undefined") {
+          window.history.replaceState(null, "", `/admin/posts/${res.id}/edit`);
+        }
+
+        pushToast(
+          mode === "publish"
+            ? "Published. The post is live."
+            : mode === "unpublish"
+            ? "Unpublished. The post is now a draft."
+            : res.published
+            ? "Changes saved. They are live."
+            : "Draft saved.",
+          "success"
+        );
+      } catch {
+        pushToast("Network or server error while saving. Please try again.", "error");
+      }
     });
   }
 
@@ -3333,7 +3080,10 @@ export function PostEditor({
   runRef.current = run;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") { e.preventDefault(); runRef.current("save"); }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        runRef.current("save");
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -3341,7 +3091,7 @@ export function PostEditor({
 
   const imageOk = image.trim() !== "" && isValidImage(image.trim());
   const checks = [
-    { ok: title.trim() !== "" && SLUG_RE.test(slug), label: "Title and a valid slug" },
+    { ok: title.trim() !== "" && SLUG_RE.test(slug) && slugState !== "taken", label: "Title and a valid slug" },
     { ok: description.trim() !== "", label: "Meta description" },
     { ok: isValidDate(date), label: "Publish date" },
     { ok: imageOk, label: "Image URL" },
@@ -3354,331 +3104,355 @@ export function PostEditor({
   const sidebarHidden = focusMode || !showSettings;
 
   return (
-    <div className={`a-editor ${focusMode ? "is-focus" : ""}`} data-be-theme={theme}>
-      <div className="a-editorbar">
-        <div className="a-editorbar-left">
-          <StatusBadge published={published} />
-          <span className={`a-savestate ${dirty ? "is-dirty" : ""}`} aria-live="polite">
-            {pending ? "Saving…" : dirty ? "Unsaved changes" : isNew && id === undefined ? "Not saved yet" : "All changes saved"}
-          </span>
-        </div>
-        <div className="a-editorbar-right">
-          <button type="button" className="btn btn-ghost btn-sm" onClick={toggleTheme} aria-pressed={theme === "dark"}>
-            {theme === "dark" ? "Light mode" : "Dark mode"}
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            onClick={() => {
-              if (focusMode) {
-                setFocusMode(false);
-                setShowSettings(true);
-              } else {
-                setShowSettings((v) => !v);
-              }
-            }}
-            aria-pressed={!sidebarHidden}
-            disabled={view === "preview"}
-          >
-            {sidebarHidden ? "Show settings" : "Hide settings"}
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            onClick={() => setFocusMode((v) => !v)}
-            aria-pressed={focusMode}
-            disabled={view === "preview"}
-          >
-            {focusMode ? "Exit focus" : "Focus mode"}
-          </button>
-          <button type="button" className="btn btn-ghost btn-sm" disabled={pending} onClick={() => run("save")}>
-            {published ? "Save changes" : "Save draft"}
-          </button>
-          {published ? (
-            <button type="button" className="btn btn-ghost btn-sm" disabled={pending} onClick={() => setConfirmUnpublish(true)}>
-              <Icon name="download" /> Unpublish
-            </button>
-          ) : (
-            <button type="button" className="btn btn-primary btn-sm" disabled={pending} onClick={() => run("publish")}>
-              <Icon name="upload" /> Publish
-            </button>
-          )}
-        </div>
-      </div>
-
-      {issues.length > 0 && (
-        <div className="error-box a-issues" role="alert">
-          <Icon name="alert" />
-          <div>
-            <strong>Fix these before saving:</strong>
-            <ul>{issues.map((m, i) => <li key={i}>{m}</li>)}</ul>
+    <>
+      <style dangerouslySetInnerHTML={{ __html: EDITOR_CSS }} />
+      <div className={`a-editor ${focusMode ? "is-focus" : ""}`} data-be-theme={theme}>
+        <div className="a-editorbar">
+          <div className="a-editorbar-left">
+            <StatusBadge published={published} />
+            <span className={`a-savestate ${dirty ? "is-dirty" : ""}`} aria-live="polite">
+              {pending ? "Saving…" : dirty ? "Unsaved changes" : isNew && id === undefined ? "Not saved yet" : "All changes saved"}
+            </span>
           </div>
-        </div>
-      )}
-
-      <div className="a-editor-subbar">
-        <div className="a-tabs" role="tablist" aria-label="Editor view">
-          <button type="button" role="tab" aria-selected={view === "edit"} onClick={() => setView("edit")}>Write</button>
-          <button type="button" role="tab" aria-selected={view === "preview"} onClick={() => setView("preview")}>Live preview</button>
-        </div>
-      </div>
-
-      {view === "preview" ? (
-        <div className="glass a-card a-preview">
-          <p className="a-hint">This is how the post body will look on the site. Unsaved changes are included.</p>
-          <div className="prose">
-            <h1 style={{ fontSize: "clamp(2rem, 4.5vw, 3rem)" }}>{title.trim() || "Untitled post"}</h1>
-            <p className="post-meta">{formatPostDate(date)} · {readMinutes || "?"} min read</p>
-            {imageOk && !imageBroken && (
-              <div className="post-hero" style={{ position: "relative", aspectRatio: "16/9", borderRadius: 14, overflow: "hidden", marginBottom: 24 }}>
-                <img src={image.trim()} alt={imageAlt} onError={() => setImageBroken(true)} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
-              </div>
+          <div className="a-editorbar-right">
+            {published && slug && (
+              <a
+                className="btn btn-ghost btn-sm"
+                href={`/blog/${slug}`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Icon name="external" /> View live
+              </a>
             )}
-            {previewSections.length ? <PostSections sections={previewSections as PostSection[]} /> : <p>No content yet. Start writing on the Write tab.</p>}
+            <button type="button" className="btn btn-ghost btn-sm" onClick={toggleTheme} aria-pressed={theme === "dark"}>
+              {theme === "dark" ? "Light mode" : "Dark mode"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => {
+                if (focusMode) {
+                  setFocusMode(false);
+                  setShowSettings(true);
+                } else {
+                  setShowSettings((v) => !v);
+                }
+              }}
+              aria-pressed={!sidebarHidden}
+              disabled={view === "preview"}
+            >
+              {sidebarHidden ? "Show settings" : "Hide settings"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => setFocusMode((v) => !v)}
+              aria-pressed={focusMode}
+              disabled={view === "preview"}
+            >
+              {focusMode ? "Exit focus" : "Focus mode"}
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" disabled={pending} onClick={() => run("save")}>
+              {pending ? "Saving…" : published ? "Save changes" : "Save draft"}
+            </button>
+            {published ? (
+              <button type="button" className="btn btn-ghost btn-sm" disabled={pending} onClick={() => setConfirmUnpublish(true)}>
+                <Icon name="download" /> Unpublish
+              </button>
+            ) : (
+              <button type="button" className="btn btn-primary btn-sm" disabled={pending} onClick={() => run("publish")}>
+                <Icon name="upload" /> Publish
+              </button>
+            )}
           </div>
         </div>
-      ) : (
-        <div className={`a-editor-grid ${sidebarHidden ? "is-solo" : ""}`}>
-          <div className="a-col-main">
-            <div className="a-sheet">
-              <BlockCanvas
-                blocks={blocks}
-                onChange={setBlocks}
-                theme={theme}
-                headerSlot={
-                  <>
-                    {showCoverPicker ? (
-                      <div className="a-cover-wrap">
-                        <ImagePicker
-                          variant="cover"
-                          hideUrl
-                          url={image}
-                          onUrl={(nextUrl) => {
-                            setImage(nextUrl);
-                            if (!nextUrl) setShowCoverPicker(false);
-                          }}
-                          onBroken={setImageBroken}
-                          onError={(message) => toast.push(message, "error")}
-                          onUploaded={() => toast.push("Featured image uploaded.", "success")}
-                        />
-                        {!image.trim() && (
-                          <div style={{ marginTop: 6, display: "flex", justifyContent: "flex-end" }}>
-                            <button type="button" className="a-be-linkish" onClick={() => setShowCoverPicker(false)}>
-                              Hide cover uploader
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="a-cover-toggle-bar">
-                        <button type="button" className="a-be-linkish" onClick={() => setShowCoverPicker(true)}>
-                          + Add featured cover image
-                        </button>
-                      </div>
-                    )}
-                    <div className="a-sheet-inner">
-                      <label className="a-field a-titlefield">
-                        <span className="sr-only">Title</span>
-                        <textarea
-                          ref={titleRef}
-                          className="a-be-title"
-                          rows={1}
-                          value={title}
-                          maxLength={200}
-                          placeholder="Post title…"
-                          aria-invalid={Boolean(fieldErrors.title)}
-                          onChange={(e) => {
-                            setTitle(e.target.value);
-                            if (!slugTouched) setSlug(slugify(e.target.value));
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              document.querySelector<HTMLElement>(".a-be .a-be-flow")?.focus();
-                            }
-                          }}
-                        />
-                        {fieldErrors.title && <span className="a-error">{fieldErrors.title}</span>}
-                      </label>
-                      {fieldErrors.sections && <p className="a-error" style={{ marginTop: 10 }}>{fieldErrors.sections}</p>}
-                    </div>
-                  </>
-                }
-              />
+
+        {issues.length > 0 && (
+          <div className="error-box a-issues" role="alert">
+            <Icon name="alert" />
+            <div>
+              <strong>Fix these before saving:</strong>
+              <ul>{issues.map((m, i) => <li key={i}>{m}</li>)}</ul>
             </div>
           </div>
+        )}
 
-          {!sidebarHidden && (
-            <aside className="a-col-side">
-              <div className="glass a-card">
-                <h3>Search listing</h3>
-                <label className="a-field">
-                  <span className="a-label">URL slug</span>
-                  <div className="a-slug">
-                    <span className="a-slug-prefix">/blog/</span>
-                    <input
-                      className="a-input"
-                      value={slug}
-                      maxLength={100}
-                      readOnly={slugLocked}
-                      aria-invalid={Boolean(fieldErrors.slug) || slugState === "invalid" || slugState === "taken"}
-                      onChange={(e) => { setSlugTouched(true); setSlug(e.target.value.toLowerCase()); }}
-                      onBlur={() => setSlug((s) => slugify(s))}
-                      placeholder="how-much-snow-closes-school"
-                    />
-                    {slugLocked && (
-                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSlugUnlocked(true)}>
-                        <Icon name="lock" /> Unlock
-                      </button>
-                    )}
-                  </div>
-                  {slugState === "free" && <span className="a-ok">Available</span>}
-                  {slugState === "invalid" && <span className="a-error">Use lowercase letters, numbers and single hyphens only.</span>}
-                  {fieldErrors.slug && <span className="a-error">{fieldErrors.slug}</span>}
-                </label>
-                <label className="a-field">
-                  <span className="a-label">
-                    Meta description
-                    <span className={`a-counter ${descLen > 160 ? "is-warn" : descLen >= 120 ? "is-good" : ""}`}>{descLen}/500 · aim for 120–160</span>
-                  </span>
-                  <textarea
-                    className="a-input a-textarea"
-                    rows={3}
-                    value={description}
-                    maxLength={500}
-                    onChange={(e) => setDescription(e.target.value)}
-                    placeholder="One or two sentences that make someone want to click."
-                  />
-                </label>
-                <SnippetPreview title={title} slug={slug} description={description} />
+        <div className="a-editor-subbar">
+          <div className="a-tabs" role="tablist" aria-label="Editor view">
+            <button type="button" role="tab" aria-selected={view === "edit"} onClick={() => setView("edit")}>Write</button>
+            <button type="button" role="tab" aria-selected={view === "preview"} onClick={() => setView("preview")}>Live preview</button>
+          </div>
+        </div>
+
+        {view === "preview" ? (
+          <div className="glass a-card a-preview">
+            <p className="a-hint">This is how the post body will look on the site. Unsaved changes are included.</p>
+            <div className="prose">
+              <h1 style={{ fontSize: "clamp(2rem, 4.5vw, 3rem)" }}>{title.trim() || "Untitled post"}</h1>
+              <p className="post-meta">{formatPostDate(date)} · {readMinutes || "?"} min read</p>
+              {imageOk && !imageBroken && (
+                <div className="post-hero" style={{ position: "relative", aspectRatio: "16/9", borderRadius: 14, overflow: "hidden", marginBottom: 24 }}>
+                  <img src={image.trim()} alt={imageAlt} onError={() => setImageBroken(true)} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                </div>
+              )}
+              {previewSections.length ? <PostSections sections={previewSections as PostSection[]} /> : <p>No content yet. Start writing on the Write tab.</p>}
+            </div>
+          </div>
+        ) : (
+          <div className={`a-editor-grid ${sidebarHidden ? "is-solo" : ""}`}>
+            <div className="a-col-main">
+              <div className="a-sheet">
+                <BlockCanvas
+                  blocks={blocks}
+                  onChange={setBlocks}
+                  theme={theme}
+                  headerSlot={
+                    <>
+                      {showCoverPicker ? (
+                        <div className="a-cover-wrap">
+                          <ImagePicker
+                            variant="cover"
+                            hideUrl
+                            url={image}
+                            onUrl={(nextUrl) => {
+                              setImage(nextUrl);
+                              if (!nextUrl) setShowCoverPicker(false);
+                            }}
+                            onBroken={setImageBroken}
+                            onError={(message) => pushToast(message, "error")}
+                            onUploaded={() => pushToast("Featured image uploaded.", "success")}
+                          />
+                          {!image.trim() && (
+                            <div style={{ marginTop: 6, display: "flex", justifyContent: "flex-end" }}>
+                              <button type="button" className="a-be-linkish" onClick={() => setShowCoverPicker(false)}>
+                                Hide cover uploader
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="a-cover-toggle-bar">
+                          <button type="button" className="a-be-linkish" onClick={() => setShowCoverPicker(true)}>
+                            + Add featured cover image
+                          </button>
+                        </div>
+                      )}
+                      <div className="a-sheet-inner">
+                        <label className="a-field a-titlefield">
+                          <span className="sr-only">Title</span>
+                          <textarea
+                            ref={titleRef}
+                            className="a-be-title"
+                            rows={1}
+                            value={title}
+                            maxLength={200}
+                            placeholder="Post title…"
+                            aria-invalid={Boolean(fieldErrors.title)}
+                            onChange={(e) => {
+                              setTitle(e.target.value);
+                              if (!slugTouched) setSlug(slugify(e.target.value));
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                document.querySelector<HTMLElement>(".a-be .a-be-flow")?.focus();
+                              }
+                            }}
+                          />
+                          {fieldErrors.title && <span className="a-error">{fieldErrors.title}</span>}
+                        </label>
+                        {fieldErrors.sections && <p className="a-error" style={{ marginTop: 10 }}>{fieldErrors.sections}</p>}
+                      </div>
+                    </>
+                  }
+                />
               </div>
+            </div>
 
-              <div className="glass a-card">
-                <h3>Featured image</h3>
-                <p className="a-hint">Upload it in the cover area above the title. Every image is cropped to 16:9 ({IMAGE_SIZE_LABEL}) automatically.</p>
-                <label className="a-field">
-                  <span className="a-label">Image URL</span>
-                  <input ref={imageRef} className="a-input" value={image} onChange={(e) => setImage(e.target.value)} placeholder="/blog/snow.svg or https://…" />
-                </label>
-                <label className="a-field">
-                  <span className="a-label">Alt text <span className="a-counter">{imageAlt.length}/300</span></span>
-                  <textarea className="a-input a-textarea" rows={2} value={imageAlt} maxLength={300} onChange={(e) => setImageAlt(e.target.value)} placeholder="Describe the image for people who can't see it" />
-                </label>
-              </div>
-
-              <div className="glass a-card">
-                <h3>Details</h3>
-                <label className="a-field">
-                  <span className="a-label">Publish date</span>
-                  <input className="a-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-                </label>
-                <label className="a-field">
-                  <span className="a-label">Updated date <em>(optional)</em></span>
-                  <div className="a-inline">
-                    <input className="a-input" type="date" value={updated} onChange={(e) => setUpdated(e.target.value)} />
-                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => setUpdated(todayISO())}>Today</button>
-                  </div>
-                </label>
-                <div className="a-field">
-                  <span className="a-label">Read time (minutes)</span>
-                  <div className="a-inline">
-                    <input
-                      className="a-input"
-                      type="number"
-                      min={1}
-                      max={180}
-                      value={autoRead ? String(readMinutes) : readText}
-                      disabled={autoRead}
-                      onChange={(e) => setReadText(e.target.value)}
-                      aria-label="Read time in minutes"
-                    />
-                    <label className="a-check">
+            {!sidebarHidden && (
+              <aside className="a-col-side">
+                <div className="glass a-card">
+                  <h3>Search listing</h3>
+                  <label className="a-field">
+                    <span className="a-label">URL slug</span>
+                    <div className="a-slug">
+                      <span className="a-slug-prefix">/blog/</span>
                       <input
-                        type="checkbox"
-                        checked={autoRead}
-                        onChange={(e) => {
-                          if (!e.target.checked) setReadText(String(readMinutes || 5));
-                          setAutoRead(e.target.checked);
-                        }}
-                      />{" "}
-                      Auto
-                    </label>
+                        className="a-input"
+                        value={slug}
+                        maxLength={100}
+                        readOnly={slugLocked}
+                        aria-invalid={Boolean(fieldErrors.slug) || slugState === "invalid" || slugState === "taken"}
+                        onChange={(e) => { setSlugTouched(true); setSlug(e.target.value.toLowerCase()); }}
+                        onBlur={() => setSlug((s) => slugify(s))}
+                        placeholder="how-much-snow-closes-school"
+                      />
+                      {slugLocked && (
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSlugUnlocked(true)}>
+                          <Icon name="lock" /> Unlock
+                        </button>
+                      )}
+                    </div>
+                    {slugState === "checking" && <span className="a-hint">Checking availability…</span>}
+                    {slugState === "free" && <span className="a-ok">Available</span>}
+                    {slugState === "taken" && <span className="a-error">Another post already uses this slug.</span>}
+                    {slugState === "invalid" && <span className="a-error">Use lowercase letters, numbers and single hyphens only.</span>}
+                    {fieldErrors.slug && <span className="a-error">{fieldErrors.slug}</span>}
+                  </label>
+                  <label className="a-field">
+                    <span className="a-label">
+                      Meta description
+                      <span className={`a-counter ${descLen > 160 ? "is-warn" : descLen >= 120 ? "is-good" : ""}`}>{descLen}/500 · aim for 120–160</span>
+                    </span>
+                    <textarea
+                      className="a-input a-textarea"
+                      rows={3}
+                      value={description}
+                      maxLength={500}
+                      aria-invalid={Boolean(fieldErrors.description)}
+                      onChange={(e) => setDescription(e.target.value)}
+                      placeholder="One or two sentences that make someone want to click."
+                    />
+                    {fieldErrors.description && <span className="a-error">{fieldErrors.description}</span>}
+                  </label>
+                  <SnippetPreview title={title} slug={slug} description={description} />
+                </div>
+
+                <div className="glass a-card">
+                  <h3>Featured image</h3>
+                  <p className="a-hint">Upload it in the cover area above the title. Every image is cropped to 16:9 ({IMAGE_SIZE_LABEL}) automatically.</p>
+                  <label className="a-field">
+                    <span className="a-label">Image URL</span>
+                    <input
+                      ref={imageRef}
+                      className="a-input"
+                      value={image}
+                      aria-invalid={Boolean(fieldErrors.image)}
+                      onChange={(e) => setImage(e.target.value)}
+                      placeholder="/blog/snow.svg or https://…"
+                    />
+                    {fieldErrors.image && <span className="a-error">{fieldErrors.image}</span>}
+                  </label>
+                  <label className="a-field">
+                    <span className="a-label">Alt text <span className="a-counter">{imageAlt.length}/300</span></span>
+                    <textarea
+                      className="a-input a-textarea"
+                      rows={2}
+                      value={imageAlt}
+                      maxLength={300}
+                      aria-invalid={Boolean(fieldErrors.imageAlt)}
+                      onChange={(e) => setImageAlt(e.target.value)}
+                      placeholder="Describe the image for people who can't see it"
+                    />
+                    {fieldErrors.imageAlt && <span className="a-error">{fieldErrors.imageAlt}</span>}
+                  </label>
+                </div>
+
+                <div className="glass a-card">
+                  <h3>Details</h3>
+                  <label className="a-field">
+                    <span className="a-label">Publish date</span>
+                    <input
+                      className="a-input"
+                      type="date"
+                      value={date}
+                      aria-invalid={Boolean(fieldErrors.date)}
+                      onChange={(e) => setDate(e.target.value)}
+                    />
+                    {fieldErrors.date && <span className="a-error">{fieldErrors.date}</span>}
+                  </label>
+                  <label className="a-field">
+                    <span className="a-label">Updated date <em>(optional)</em></span>
+                    <div className="a-inline">
+                      <input
+                        className="a-input"
+                        type="date"
+                        value={updated}
+                        aria-invalid={Boolean(fieldErrors.updated)}
+                        onChange={(e) => setUpdated(e.target.value)}
+                      />
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => setUpdated(todayISO())}>Today</button>
+                    </div>
+                    {fieldErrors.updated && <span className="a-error">{fieldErrors.updated}</span>}
+                  </label>
+                  <div className="a-field">
+                    <span className="a-label">Read time (minutes)</span>
+                    <div className="a-inline">
+                      <input
+                        className="a-input"
+                        type="number"
+                        min={1}
+                        max={180}
+                        value={autoRead ? String(readMinutes) : readText}
+                        disabled={autoRead}
+                        onChange={(e) => setReadText(e.target.value)}
+                        aria-label="Read time in minutes"
+                      />
+                      <label className="a-check">
+                        <input
+                          type="checkbox"
+                          checked={autoRead}
+                          onChange={(e) => {
+                            if (!e.target.checked) setReadText(String(readMinutes || 5));
+                            setAutoRead(e.target.checked);
+                          }}
+                        />{" "}
+                        Auto
+                      </label>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="glass a-card">
-                <h3>Tags</h3>
-                <TagInput value={tags} onChange={setTags} suggestions={tagSuggestions} />
-              </div>
+                <div className="glass a-card">
+                  <h3>Tags</h3>
+                  <TagInput value={tags} onChange={setTags} suggestions={tagSuggestions} />
+                </div>
 
-              <div className="glass a-card">
-                <h3>Ready to publish?</h3>
-                <ul className="a-checklist">
-                  {checks.map((c) => (
-                    <li key={c.label} data-ok={c.ok}>
-                      <span className="a-checkmark" aria-hidden="true">
-                        {c.ok ? <Icon name="check" className="a-icon a-icon-sm" /> : null}
-                      </span>
-                      {c.label}
-                    </li>
-                  ))}
-                </ul>
-                <p className="a-hint">{ready ? "Everything needed is in place." : "Drafts can be saved with missing items. Publishing needs all of them."}</p>
-              </div>
-            </aside>
-          )}
-        </div>
-      )}
+                <div className="glass a-card">
+                  <h3>Ready to publish?</h3>
+                  <ul className="a-checklist">
+                    {checks.map((c) => (
+                      <li key={c.label} data-ok={c.ok}>
+                        <span className="a-checkmark" aria-hidden="true">
+                          {c.ok ? <Icon name="check" className="a-icon a-icon-sm" /> : null}
+                        </span>
+                        {c.label}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="a-hint">{ready ? "Everything needed is in place." : "Drafts can be saved with missing items. Publishing needs all of them."}</p>
+                </div>
+              </aside>
+            )}
+          </div>
+        )}
 
-      <ConfirmDialog
-        open={confirmUnpublish}
-        title="Unpublish this post?"
-        confirmLabel="Save and unpublish"
-        busy={pending}
-        onConfirm={() => run("unpublish")}
-        onCancel={() => setConfirmUnpublish(false)}
-      >
-        <p>The post becomes a draft and disappears from the blog, home page and sitemap.</p>
-      </ConfirmDialog>
-    </div>
-  );
-}
+        <ConfirmDialog
+          open={confirmUnpublish}
+          title="Unpublish this post?"
+          confirmLabel="Save and unpublish"
+          busy={pending}
+          onConfirm={() => run("unpublish")}
+          onCancel={() => setConfirmUnpublish(false)}
+        >
+          <p>The post becomes a draft and disappears from the blog, home page and sitemap.</p>
+        </ConfirmDialog>
+      </div>
 
-/* ==========================================================================
-   STANDALONE PREVIEW WRAPPER (DEFAULT EXPORT)
-   ========================================================================== */
-export default function App() {
-  const [toasts, setToasts] = useState<ToastItem[]>([]);
-  const nextToastId = useRef(1);
-
-  const dismiss = useCallback((id: number) => setToasts((l) => l.filter((t) => t.id !== id)), []);
-  const push = useCallback(
-    (message: string, kind: ToastKind = "info") => {
-      const id = nextToastId.current++;
-      setToasts((l) => [...l.slice(-3), { id, message, kind }]);
-      window.setTimeout(() => dismiss(id), kind === "error" ? 6000 : 3500);
-    },
-    [dismiss]
-  );
-
-  const toastApi = useMemo(() => ({ push }), [push]);
-
-  return (
-    <ToastCtx.Provider value={toastApi}>
-      <style dangerouslySetInnerHTML={{ __html: EDITOR_CSS }} />
-      <PostEditor initial={null} />
       <div className="a-toasts" role="region" aria-label="Notifications" aria-live="polite">
         {toasts.map((t) => (
           <div key={t.id} className={`a-toast a-toast-${t.kind}`} role={t.kind === "error" ? "alert" : "status"}>
             <Icon name={t.kind === "error" ? "alert" : "check"} />
             <span>{t.message}</span>
-            <button type="button" className="a-toast-x" onClick={() => dismiss(t.id)} aria-label="Dismiss">
+            <button type="button" className="a-toast-x" onClick={() => dismissToast(t.id)} aria-label="Dismiss">
               <Icon name="close" />
             </button>
           </div>
         ))}
       </div>
-    </ToastCtx.Provider>
+    </>
   );
 }
+
+export default PostEditor;
