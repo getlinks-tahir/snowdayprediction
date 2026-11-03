@@ -1,11 +1,13 @@
 import type { PostSection } from "@/content/posts";
 import BlockView from "@/components/BlockView";
+import SafeInlineHtml from "@/components/SafeInlineHtml";
 import { sectionToViewBlock, type LooseSection } from "@/lib/admin/blocks";
 
 /**
- * Renders post sections the way the public blog always has, unless the section
- * carries a block from the new editor. Existing posts have no block and no
- * sentinel, so their markup is unchanged.
+ * Renders post sections for both the public blog and the admin live preview.
+ * Sections carrying a rich ContentBlock render through BlockView; legacy sections
+ * render with SafeInlineHtml so inline formatting works everywhere without breaking
+ * existing published posts.
  */
 export default function PostSections({ sections }: { sections: PostSection[] }) {
   return (
@@ -22,14 +24,32 @@ export default function PostSections({ sections }: { sections: PostSection[] }) 
         const s = raw;
         return (
           <section key={i}>
-            {s.heading && <h2 style={{ fontSize: "1.6rem" }}>{s.heading}</h2>}
-            {s.paragraphs?.map((p, j) => <p key={j}>{p}</p>)}
-            {s.list && (
+            {s.heading && (
+              <h2 style={{ fontSize: "1.6rem" }}>
+                <SafeInlineHtml html={s.heading} />
+              </h2>
+            )}
+            {s.paragraphs?.map((p, j) => (
+              <p key={j}>
+                <SafeInlineHtml html={p} />
+              </p>
+            ))}
+            {s.list && s.list.length > 0 && (
               <ul>
-                {s.list.map((li, j) => <li key={j}>{li}</li>)}
+                {s.list.map((li, j) => (
+                  <li key={j}>
+                    <SafeInlineHtml html={li} />
+                  </li>
+                ))}
               </ul>
             )}
-            {s.callout && <div className="callout"><p>{s.callout}</p></div>}
+            {s.callout && (
+              <div className="callout">
+                <p>
+                  <SafeInlineHtml html={s.callout} />
+                </p>
+              </div>
+            )}
           </section>
         );
       })}
