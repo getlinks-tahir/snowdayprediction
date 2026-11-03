@@ -1,5 +1,6 @@
 import "server-only";
 import type { createSupabaseServerClient } from "@/lib/supabase/server";
+import { isContentBlock } from "./blocks";
 import type { PostSection } from "./types";
 
 export type Db = Awaited<ReturnType<typeof createSupabaseServerClient>>;
@@ -44,6 +45,7 @@ function cleanSections(value: unknown): PostSection[] {
       if (Array.isArray(s.paragraphs)) out.paragraphs = strArray(s.paragraphs);
       if (Array.isArray(s.list)) out.list = strArray(s.list);
       if (typeof s.callout === "string") out.callout = s.callout;
+      if (isContentBlock(s.block)) out.block = s.block;
       return out;
     });
 }
