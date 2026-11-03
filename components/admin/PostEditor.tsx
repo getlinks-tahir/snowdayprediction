@@ -17,13 +17,13 @@ import PostSections from "@/components/PostSections";
 import { checkSlugAvailable, savePost } from "@/lib/admin/actions";
 import {
   audioEmbed,
-  blockToSectionInput,
+  blocksToSectionInputs as convertBlocksToSectionInputs,
   countWords,
   createBlock,
   htmlDocument,
   isSafeMediaUrl,
   markdownToHtml,
-  sectionsToEditorBlocks,
+  sectionsToBlocks,
   toPostSection,
   videoEmbedSrc,
   type ContentBlock,
@@ -38,8 +38,6 @@ import {
   formatPostDate,
   isValidDate,
   isValidImage,
-  SITE_NAME,
-  SITE_URL,
   SLUG_RE,
   slugify,
   todayISO,
@@ -1435,20 +1433,20 @@ function cleanPastedContentToHtml(htmlData: string, plainData: string): string {
 }
 
 function blocksToSectionInputs(blocks: EditorBlock[]): SectionInput[] {
-  return blocks
-    .map((b) => {
-      if (b.type === "paragraph" || b.type === "heading" || b.type === "quote" || b.type === "callout") {
-        return blockToSectionInput({ ...b, text: sanitizeInlineHtml(b.text) });
-      }
-      if (b.type === "bulletList" || b.type === "numberedList") {
-        return blockToSectionInput({
-          ...b,
-          items: b.items.map((item) => sanitizeInlineHtml(item)).filter((item) => stripHtml(item) !== ""),
-        });
-      }
-      return blockToSectionInput(b);
-    })
-    .filter((s): s is SectionInput => s !== null);
+  const sanitizedBlocks = blocks.map((b) => {
+    if (b.type === "paragraph" || b.type === "heading" || b.type === "quote" || b.type === "callout") {
+      return { ...b, text: sanitizeInlineHtml(b.text) } as EditorBlock;
+    }
+    if (b.type === "bulletList" || b.type === "numberedList") {
+      return {
+        ...b,
+        items: b.items.map((item) => sanitizeInlineHtml(item)).filter((item) => stripHtml(item) !== ""),
+      } as EditorBlock;
+    }
+    return b;
+  });
+
+  return convertBlocksToSectionInputs(sanitizedBlocks) as unknown as SectionInput[];
 }
 
 /* ==========================================================================
@@ -1523,6 +1521,9 @@ function StatusBadge({ published }: { published: boolean }) {
     </span>
   );
 }
+
+const SITE_NAME = "Snow Day Calculator";
+const SITE_URL = "https://www.snowdayprediction.online";
 
 function SnippetPreview({ title, slug, description }: { title: string; slug: string; description: string }) {
   const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
@@ -2938,7 +2939,7 @@ export function PostEditor({
   const [showCoverPicker, setShowCoverPicker] = useState(Boolean(initial?.image));
 
   const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
-  const [blocks, setBlocks] = useState<EditorBlock[]>(() => sectionsToEditorBlocks(initial?.sections ?? []));
+  const [blocks, setBlocks] = useState<EditorBlock[]>(() => sectionsToBlocks(initial?.sections ?? []));
 
   const [view, setView] = useState<"edit" | "preview">("edit");
   const [issues, setIssues] = useState<string[]>([]);
@@ -2968,10 +2969,10 @@ export function PostEditor({
 
   const sectionInputs = useMemo(() => blocksToSectionInputs(blocks), [blocks]);
   const previewSections = useMemo(
-    () => sectionInputs.map(toPostSection).filter((s) => Object.keys(s).length > 0),
+    () => (sectionInputs as any[]).map((s) => toPostSection(s)).filter((s) => Object.keys(s).length > 0),
     [sectionInputs]
   );
-  const readMinutes = autoRead ? estimateReadMinutes(previewSections) : Number.parseInt(readText, 10) || 0;
+  const readMinutes = autoRead ? estimateReadMinutes(previewSections as PostSection[]) : Number.parseInt(readText, 10) || 0;
 
   const snapshot = useMemo(
     () => JSON.stringify({ title, slug, description, date, updated, readMinutes, image, imageAlt, tags, sections: sectionInputs }),
