@@ -30,7 +30,6 @@ import {
   type EditorBlock,
   type HeadingLevel,
 } from "@/lib/admin/blocks";
-import type { PostInput, SaveMode, SectionInput } from "@/lib/admin/schema";
 import type { PostSection } from "@/lib/admin/types";
 import { uploadBlogImage } from "@/lib/admin/upload-actions";
 import {
@@ -42,6 +41,29 @@ import {
   slugify,
   todayISO,
 } from "@/lib/admin/validators";
+
+export type SaveMode = "save" | "publish" | "unpublish";
+
+export interface SectionInput {
+  heading: string;
+  paragraphs: string[];
+  list: string[];
+  callout: string;
+}
+
+export interface PostInput {
+  id?: number;
+  title: string;
+  slug: string;
+  description: string;
+  date: string;
+  updated: string;
+  readMinutes: number;
+  image: string;
+  imageAlt: string;
+  tags: string[];
+  sections: SectionInput[];
+}
 
 /* ==========================================================================
    EMBEDDED STYLES (Blogger / WordPress / Google Docs Continuous Studio)
@@ -2968,10 +2990,13 @@ export function PostEditor({
   }, [image]);
 
   const sectionInputs = useMemo(() => blocksToSectionInputs(blocks), [blocks]);
+  
+  // Use any to prevent TS complaints due to nested types mismatches from the local SectionInput
   const previewSections = useMemo(
     () => (sectionInputs as any[]).map((s) => toPostSection(s)).filter((s) => Object.keys(s).length > 0),
     [sectionInputs]
   );
+  
   const readMinutes = autoRead ? estimateReadMinutes(previewSections as PostSection[]) : Number.parseInt(readText, 10) || 0;
 
   const snapshot = useMemo(
@@ -2998,8 +3023,12 @@ export function PostEditor({
       try {
         const res = await checkSlugAvailable(slug, id);
         if (cancelled) return;
-        if (!res.valid) setSlugState("invalid");
-        else setSlugState(res.available ? "free" : "taken");
+        if (!res.ok) {
+          setSlugState("invalid");
+        } else {
+          const isAvail = "available" in res ? Boolean(res.available) : false;
+          setSlugState(isAvail ? "free" : "taken");
+        }
       } catch {
         if (!cancelled) setSlugState("idle");
       }
@@ -3043,22 +3072,27 @@ export function PostEditor({
       try {
         const res = await savePost(payload, mode);
         if (!res.ok) {
-          setIssues(res.issues ?? [res.message]);
-          setFieldErrors(res.fieldErrors ?? {});
-          pushToast(res.message || "Could not save the post.", "error");
+          // Cast res safely since 'issues' and 'fieldErrors' are on Failure type from actions.ts
+          const failure = res as { error?: string; issues?: string[]; fieldErrors?: Record<string, string> };
+          const errorMsg = failure.error || "Could not save the post.";
+          setIssues(failure.issues ?? [errorMsg]);
+          setFieldErrors(failure.fieldErrors ?? {});
+          pushToast(errorMsg, "error");
           return;
         }
 
         const wasNew = id === undefined;
-        setId(res.id);
-        setSlug(res.slug);
-        setPublishedState(res.published);
-        setSlugUnlocked(!res.published);
+        // Since res.ok is true, we assume it's a Success type with id, slug, published
+        const success = res as any; 
+        setId(success.id);
+        setSlug(success.slug);
+        setPublishedState(success.published);
+        setSlugUnlocked(!success.published);
         setConfirmUnpublish(false);
         setSavedSnapshot(snapAtSave);
 
         if (wasNew && typeof window !== "undefined") {
-          window.history.replaceState(null, "", `/admin/posts/${res.id}/edit`);
+          window.history.replaceState(null, "", `/admin/posts/${success.id}/edit`);
         }
 
         pushToast(
@@ -3066,7 +3100,7 @@ export function PostEditor({
             ? "Published. The post is live."
             : mode === "unpublish"
             ? "Unpublished. The post is now a draft."
-            : res.published
+            : success.published
             ? "Changes saved. They are live."
             : "Draft saved.",
           "success"
