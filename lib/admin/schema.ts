@@ -68,7 +68,7 @@ export const postInputSchema = z.object({
     }),
   sections: z
     .array(sectionSchema)
-    .max(80, "Too many sections (max 80)")
+    .max(200, "Too many sections (max 200)")
     .transform((list) => list.filter((s) => Object.keys(s).length > 0)),
 });
 
