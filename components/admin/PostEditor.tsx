@@ -1766,7 +1766,7 @@ export function ImagePicker({
       fd.set("file", prepared);
       const res = await uploadBlogImage(fd);
       if (!res.ok) {
-        fail(res.message);
+        fail(res.error); // <--- TS2339 fixed here
         return;
       }
       onUrlRef.current(res.url);
@@ -2993,6 +2993,7 @@ export function PostEditor({
   
   // Use any to prevent TS complaints due to nested types mismatches from the local SectionInput
   const previewSections = useMemo(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     () => (sectionInputs as any[]).map((s) => toPostSection(s)).filter((s) => Object.keys(s).length > 0),
     [sectionInputs]
   );
@@ -3083,6 +3084,7 @@ export function PostEditor({
 
         const wasNew = id === undefined;
         // Since res.ok is true, we assume it's a Success type with id, slug, published
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const success = res as any; 
         setId(success.id);
         setSlug(success.slug);
