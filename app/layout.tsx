@@ -45,10 +45,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       className={`${inter.variable} ${jakarta.variable}`}
       suppressHydrationWarning
     >
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
-        <link rel="preconnect" href="https://api.open-meteo.com" />
-      </head>
+      
+<head>
+  {/* Google AdSense Verification */}
+  <meta
+    name="google-adsense-account"
+    content="ca-pub-9381323223797382"
+  />
+
+  <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+  <link rel="preconnect" href="https://api.open-meteo.com" />
+</head>
       <body>
         <SiteChrome header={<Header />} footer={<Footer />}>
           {children}
