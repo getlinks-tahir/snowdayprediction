@@ -11,7 +11,7 @@ const sectionSchema = z
   .object({
     heading: z.string().trim().max(200, "Heading is too long (max 200 characters)"),
     paragraphs: z
-      .array(z.string().trim().max(5000, "A paragraph is too long (max 5000 characters)"))
+      .array(z.string().trim().max(10000, "A paragraph is too long (max 10000 characters)"))
       .max(100, "Too many paragraphs in one section"),
     list: z
       .array(z.string().trim().max(1000, "A list item is too long (max 1000 characters)"))
